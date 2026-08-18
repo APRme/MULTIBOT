@@ -1,0 +1,179 @@
+{
+  "enabled": true,
+  "autoStart": false,
+  "trustedPlayers": [
+    "example_player",
+    "ServerOwner",
+    "ExampleAdmin"
+  ],
+  "trustedPlayersMergeParent": true,
+  "trustedPlayersFile": "../trustedPlayers.txt",
+  "autoRestart": 360,
+  "teleport": {
+    "mode": "whitelist",
+    "whitelistFile": "../whitelist.txt"
+  },
+  "logging": {
+    "logToFile": true,
+    "logFilePath": "./assn_chat.log",
+    "logPlayerList": true,
+    "playerListPath": "./assn_playerList.log",
+    "playerListIntervalMinutes": 1
+  },
+  "behavior": {
+    "enableSpawnActions": false,
+    "whitelistReloadMinutes": 30,
+    "enableResourcePack": true
+  },
+  "capabilities": {
+    "entityHandling": true,
+    "terrainHandling": true
+  },
+  "display": {
+    "consoleUseAnsi": false
+  },
+  "fish": false,
+  "ScriptScheduler": {
+    "Enabled": true,
+    "TaskList": [
+      {
+        "Task_Name": "首次登录提示",
+        "Trigger_On_First_Login": true,
+        "Trigger_On_Login": true,
+        "Trigger_On_Login_Delay_Seconds": 10,
+        "Trigger_On_Times": {
+          "Enable": false,
+          "Times": []
+        },
+        "Trigger_On_Interval": {
+          "Enable": false,
+          "MinTime": 1,
+          "MaxTime": 1,
+          "Unit": "seconds"
+        },
+        "Action": "send 我已上线"
+      },
+      {
+        "Task_Name": "周期性整理",
+        "Trigger_On_First_Login": false,
+        "Trigger_On_Login": false,
+        "Trigger_On_Login_Delay_Seconds": 0,
+        "Trigger_On_Times": {
+          "Enable": false,
+          "Times": []
+        },
+        "Trigger_On_Interval": {
+          "Enable": true,
+          "MinTime": 20,
+          "MaxTime": 45,
+          "Unit": "minutes"
+        },
+        "Action": "health"
+      },
+      {
+        "Task_Name": "定时广播",
+        "Trigger_On_First_Login": false,
+        "Trigger_On_Login": false,
+        "Trigger_On_Login_Delay_Seconds": 0,
+        "Trigger_On_Times": {
+          "Enable": true,
+          "Times": [
+            "00:00:00",
+            "12:00:00",
+            "18:30:00"
+          ]
+        },
+        "Trigger_On_Interval": {
+          "Enable": false,
+          "MinTime": 1,
+          "MaxTime": 1,
+          "Unit": "seconds"
+        },
+        "Action": "send 定时任务执行"
+      }
+    ]
+  },
+  "attack": {
+    "autoAttack": false,
+    "attackRange": 3.5,
+    "attackInterval": 2000,
+    "targetFilter": {
+      "excludePlayers": false,
+      "excludeItems": true,
+      "targetTypes": [
+        "mob",
+        "zombie",
+        "skeleton"
+      ]
+    }
+  },
+  "blockBreakDetection": {
+    "enabled": false,
+    "alertTrustedPlayers": [
+      "example_player",
+      "ServerOwner"
+    ],
+    "excludeCreativeMode": true,
+    "logToConsole": true,
+    "logToFile": true,
+    "logFilePath": "./block-break.log",
+    "monitoredBlocks": [
+      "chest",
+      "barrel",
+      "shulker_box",
+      "diamond_ore"
+    ]
+  },
+  "monitoring": {
+    "enabled": false,
+    "intervalSeconds": 10,
+    "targetTypes": [
+      "minecraft:wandering_trader",
+      "minecraft:trader_llama",
+      "minecraft:villager"
+    ]
+  },
+  "recording": {
+    "enabled": false,
+    "outputDir": "../replays",
+    "bootstrapWindowTicks": 20,
+    "bootstrapTimeoutMs": 5000,
+    "includeWorldSnapshot": true,
+    "includeMinimalLocalPlayer": true,
+    "debug": false,
+    "debugLogFileEnabled": false,
+    "debugLogFilePath": "./flashback_debug.log",
+    "debugChunkCapture": false,
+    "debugChunkCaptureLimit": 20,
+    "entityScope": "all_visible",
+    "equipmentScope": "all_with_equipment",
+    "includeTimeUpdates": true,
+    "includeWeatherState": true,
+    "includeDifficulty": true,
+    "includeSpawnPosition": true,
+    "includeWorldBorder": true,
+    "includeBlockEntityUpdates": true,
+    "includeLaterChunkLoads": true,
+    "includeParticles": true,
+    "includeCollectAnimation": true,
+    "includeHurtAnimation": true,
+    "includeBossBar": true,
+    "includeScoreboard": true,
+    "includeTabListHeaderFooter": true,
+    "includeMapData": true,
+    "chunkDurationTicks": 6000,
+    "archiveRotationEnabled": true,
+    "archiveNominalMinutes": 60,
+    "archiveOverlapMinutes": 5,
+    "recoverPendingArchivesOnStart": true,
+    "shutdownExportTimeoutMs": 60000,
+    "enableChunkCache": true,
+    "continueAcrossDimensions": true,
+    "debugDroppedPackets": false,
+    "memoryMonitor": {
+      "enabled": false,
+      "intervalMs": 60000,
+      "toConsole": false
+    }
+  }
+}

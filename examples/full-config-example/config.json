@@ -1,0 +1,195 @@
+{
+  "id": "ExampleBot",
+  "enabled": true,
+  "autoStart": false,
+  "host": "viaproxy.local",
+  "port": 25568,
+  "auth": "microsoft",
+  "version": "1.21.11",
+  "username": "ExampleBot",
+  "email": "example-bot@outlook.com",
+  "viewDistance": "tiny",
+  "disableChatSigning": true,
+  "checkTimeoutInterval": 30000,
+  "restartOnDisconnect": true,
+  "restartDelayMs": 60000,
+  "restartJitterMs": 120000,
+  "trustedPlayers": [
+    "example_player",
+    "ExampleOwner",
+    "ExampleAdmin"
+  ],
+  "trustedPlayersFile": "../trustedPlayers.txt",
+  "autoRestart": 180,
+  "teleport": {
+    "mode": "trustedPlayers",
+    "whitelistFile": "../whitelist.txt"
+  },
+  "logging": {
+    "logToFile": true,
+    "logFilePath": "./assn_chat.log",
+    "logPlayerList": true,
+    "playerListPath": "./assn_playerList.log",
+    "playerListIntervalMinutes": 1
+  },
+  "behavior": {
+    "enableSpawnActions": false,
+    "whitelistReloadMinutes": 30,
+    "enableResourcePack": true
+  },
+  "capabilities": {
+    "entityHandling": true,
+    "terrainHandling": true
+  },
+  "display": {
+    "consoleUseAnsi": false
+  },
+  "fish": false,
+  "ScriptScheduler": {
+    "Enabled": true,
+    "TaskList": [
+      {
+        "Task_Name": "首次登录提示",
+        "Trigger_On_First_Login": true,
+        "Trigger_On_Login": true,
+        "Trigger_On_Login_Delay_Seconds": 10,
+        "Trigger_On_Times": {
+          "Enable": false,
+          "Times": []
+        },
+        "Trigger_On_Interval": {
+          "Enable": false,
+          "MinTime": 1,
+          "MaxTime": 1,
+          "Unit": "seconds"
+        },
+        "Action": "send ExampleBot 已上线"
+      },
+      {
+        "Task_Name": "周期性整理",
+        "Trigger_On_First_Login": false,
+        "Trigger_On_Login": false,
+        "Trigger_On_Login_Delay_Seconds": 0,
+        "Trigger_On_Times": {
+          "Enable": false,
+          "Times": []
+        },
+        "Trigger_On_Interval": {
+          "Enable": true,
+          "MinTime": 10,
+          "MaxTime": 20,
+          "Unit": "minutes"
+        },
+        "Action": "inv info"
+      },
+      {
+        "Task_Name": "定时聊天",
+        "Trigger_On_First_Login": false,
+        "Trigger_On_Login": false,
+        "Trigger_On_Login_Delay_Seconds": 0,
+        "Trigger_On_Times": {
+          "Enable": true,
+          "Times": [
+            "08:00:00",
+            "20:00:00"
+          ]
+        },
+        "Trigger_On_Interval": {
+          "Enable": false,
+          "MinTime": 1,
+          "MaxTime": 1,
+          "Unit": "seconds"
+        },
+        "Action": "send 例行消息"
+      }
+    ]
+  },
+  "attack": {
+    "autoAttack": false,
+    "attackRange": 4,
+    "attackInterval": 1500,
+    "targetFilter": {
+      "excludePlayers": false,
+      "excludeItems": true,
+      "targetTypes": [
+        "mob",
+        "zombie",
+        "creeper",
+        "skeleton"
+      ]
+    }
+  },
+  "blockBreakDetection": {
+    "enabled": false,
+    "alertTrustedPlayers": [
+      "example_player",
+      "ExampleOwner"
+    ],
+    "excludeCreativeMode": true,
+    "logToConsole": true,
+    "logToFile": true,
+    "logFilePath": "./block-break.log",
+    "monitoredBlocks": [
+      "chest",
+      "barrel",
+      "ender_chest",
+      "diamond_block"
+    ]
+  },
+  "monitoring": {
+    "enabled": false,
+    "intervalSeconds": 10,
+    "targetTypes": [
+      "minecraft:wandering_trader",
+      "minecraft:trader_llama",
+      "minecraft:warden"
+    ]
+  },
+  "recording": {
+    "enabled": true,
+    "outputDir": "../replays",
+    "bootstrapWindowTicks": 20,
+    "bootstrapTimeoutMs": 5000,
+    "includeWorldSnapshot": true,
+    "includeMinimalLocalPlayer": true,
+    "debug": false,
+    "debugLogFileEnabled": false,
+    "debugLogFilePath": "./flashback_debug.log",
+    "debugChunkCapture": false,
+    "debugChunkCaptureLimit": 20,
+    "entityScope": "all_visible",
+    "equipmentScope": "all_with_equipment",
+    "includeTimeUpdates": true,
+    "includeWeatherState": true,
+    "includeDifficulty": true,
+    "includeSpawnPosition": true,
+    "includeWorldBorder": true,
+    "includeBlockEntityUpdates": true,
+    "includeLaterChunkLoads": true,
+    "includeParticles": true,
+    "includeCollectAnimation": true,
+    "includeHurtAnimation": true,
+    "includeBossBar": true,
+    "includeScoreboard": true,
+    "includeTabListHeaderFooter": true,
+    "includeMapData": true,
+    "chunkDurationTicks": 6000,
+    "archiveRotationEnabled": true,
+    "archiveNominalMinutes": 60,
+    "archiveOverlapMinutes": 5,
+    "recoverPendingArchivesOnStart": true,
+    "shutdownExportTimeoutMs": 60000,
+    "enableChunkCache": true,
+    "continueAcrossDimensions": true,
+    "debugDroppedPackets": false,
+    "memoryMonitor": {
+      "enabled": false,
+      "intervalMs": 60000,
+      "toConsole": false
+    }
+  },
+  "warehouse": {
+    "enabled": true,
+    "rulesFile": "wh1/rules.json"
+  }
+}

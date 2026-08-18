@@ -1,0 +1,72 @@
+{
+  "_comment": "仓库规则与运行设置完整示范。运行时位置:WareHouse/<serverDir>/wh1/rules.json；同一服务器下 rulesFile 均为 wh1/rules.json 的 Bot 共享此仓库。x/y/z 必须填写箱子方块的真实坐标，不是 Bot 站位；启用 lockY 后，Bot 会在锁定高度搜索箱子周围四格内的空位，并按眼睛到方块最近表面的 4 格距离依次尝试。containers 之间、containers 与 inbox 的坐标不能重复。修改后向 Bot 发送 warehouse reload 生效(非法规则会被拒绝加载)。",
+  "movement": {
+    "lockY": {
+      "enabled": true,
+      "value": 74
+    }
+  },
+  "idle": {
+    "enabled": true,
+    "position": {
+      "x": 50,
+      "y": 74,
+      "z": 100
+    }
+  },
+  "automation": {
+    "pickupSort": {
+      "enabled": true,
+      "delaySeconds": 10
+    },
+    "scheduled": {
+      "enabled": true,
+      "intervalSeconds": 1800,
+      "action": "sortThenAudit"
+    }
+  },
+  "inbox": [
+    { "x": 1000, "y": 64, "z": 1000 },
+    { "x": 1001, "y": 64, "z": 1000 }
+  ],
+  "dropZone": {
+    "min": { "x": 990, "y": 63, "z": 990 },
+    "max": { "x": 1010, "y": 65, "z": 1010 }
+  },
+  "containers": [
+    {
+      "name": "矿石箱",
+      "x": 1010,
+      "y": 64,
+      "z": 1000,
+      "allow": [
+        "minecraft:iron_ingot",
+        "minecraft:gold_ingot",
+        "minecraft:copper_ingot"
+      ]
+    },
+    {
+      "name": "原木箱",
+      "x": 1011,
+      "y": 64,
+      "z": 1000,
+      "allow": [
+        "minecraft:oak_log",
+        "minecraft:spruce_log",
+        "minecraft:birch_log"
+      ]
+    },
+    {
+      "name": "杂项箱",
+      "x": 1020,
+      "y": 64,
+      "z": 1000,
+      "default": true
+    }
+  ],
+  "pickup": {
+    "x": 1030,
+    "y": 64,
+    "z": 1000
+  }
+}
