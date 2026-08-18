@@ -1,0 +1,5 @@
+# Shared whitelist for automatic TPA acceptance
+# One player name per line
+example_player
+example_trusted
+ServerOwner

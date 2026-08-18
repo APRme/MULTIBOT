@@ -1,0 +1,37 @@
+{
+  "host": "viaproxy.local",
+  "port": 25568,
+  "version": "1.21.11",
+  "auth": "microsoft",
+  "openAuth": {
+    "enabled": true,
+    "requestTimeoutMs": 4500
+  },
+  "viewDistance": "tiny",
+  "disableChatSigning": true,
+  "checkTimeoutInterval": 30000,
+  "restartOnDisconnect": true,
+  "restartDelayMs": 60000,
+  "restartDelayScheduleMs": [
+    60000,
+    300000,
+    600000,
+    900000,
+    1800000,
+    3600000,
+    7200000
+  ],
+  "restartJitterMs": 120000,
+  "restartDelayScheduleRepeatLast": true,
+  "teleportPromptMatchers": {
+    "stripLines": [
+      "^使用 /tpaccept 接受，使用 /tpdeny 拒绝。$"
+    ],
+    "tpa": [
+      "^(?<sender>[A-Za-z0-9_]{1,16}) 向你发起了传送申请$"
+    ],
+    "tpahere": [
+      "^(?<sender>[A-Za-z0-9_]{1,16}) 邀请你传送到其位置$"
+    ]
+  }
+}
