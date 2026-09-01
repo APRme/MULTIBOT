@@ -58,8 +58,6 @@ Unless the user explicitly asks otherwise, new feature work should land in `MULT
   - copied legacy helpers allowed for reuse
 - `src/logging`
   - logging, aggregation, console/file coordination
-- `flashback-recorder`
-  - optional local-only recorder implementation; ignored by Git and absent from the public repository
 - `test`
   - backend tests; prefer targeted coverage first
 - `BOTS`
@@ -100,13 +98,6 @@ Unless the user explicitly asks otherwise, new feature work should land in `MULT
   - backend main console
   - per-bot log files
   - aggregated server-level files
-
-### `flashback-recorder`
-
-- Treat `MULTIBOT/flashback-recorder` as local-only and never add it to Git.
-- If a local recorder fix is needed, patch the ignored local copy without staging it.
-- Prefer measurable and toggleable behavior changes.
-- Avoid deep protocol/state rewrites unless explicitly required.
 
 ## Testing Guidance
 
