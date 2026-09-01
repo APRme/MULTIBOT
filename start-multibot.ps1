@@ -8,6 +8,9 @@ $ErrorActionPreference = "Stop"
 
 Set-Location -LiteralPath $PSScriptRoot
 
+# Node heap/GC tuning for high-traffic areas; write a heap snapshot before OOM for analysis.
+$env:NODE_OPTIONS = "--max-old-space-size=4096 --max-semi-space-size=512 --heapsnapshot-near-heap-limit=2"
+
 function Resolve-ConfigPath {
   param(
     [string]$PathText
