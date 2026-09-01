@@ -542,7 +542,7 @@ client timed out after 30000 milliseconds
 
 当目标服务器强制使用 `26.1.2`，而当前 Mineflayer 客户端协议为 `1.21.11` 时，可用 ViaProxy 做协议转换，并由 MULTIBOT 的 OpenAuth 客户端使用各 bot 自己的 Microsoft 会话完成目标服认证：
 
-升级后启动首行应为 `MULTIBOT V26.3.6-OpenAuth`；如果仍显示旧版本号，应先检查当前 Git 提交和实际启动目录。
+升级后启动首行应为 `MULTIBOT V26.4.6-OpenAuth`；如果仍显示旧版本号，应先检查当前 Git 提交和实际启动目录。
 
 ```text
 MULTIBOT (1.21.11) -> ViaProxy 127.0.0.1:25568 -> 目标服 26.1.2
