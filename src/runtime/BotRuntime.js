@@ -385,6 +385,9 @@ class BotRuntime {
     this.pendingAuthState = null;
     this.capabilities = normalizeCapabilitiesConfig(this.config.legacyConfig);
     this.physicsStandbyEnabled = this.config.legacyConfig?.behavior?.physicsStandby === true;
+    this.latencyMs = null;
+    this.pendingPingId = null;
+    this.pingTimer = null;
     this.diagnostics = {
       connectionCount: 0,
       currentConnectionStartedAt: null,
@@ -570,6 +573,27 @@ class BotRuntime {
     }
 
     this.bot.physicsEnabled = enabled === true;
+  }
+
+  handlePingResponse(packet) {
+    if (this.pendingPingId === null || !packet) {
+      return;
+    }
+
+    const id = Number(packet.id);
+    if (id === this.pendingPingId) {
+      this.latencyMs = Date.now() - this.pendingPingId;
+      this.pendingPingId = null;
+    }
+  }
+
+  clearPingTimer() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+
+    this.pendingPingId = null;
   }
 
   handleMsaCode(response) {
@@ -1135,6 +1159,7 @@ class BotRuntime {
     this.clearRestartTimer();
     this.clearStartupWarningTimer();
     this.clearLegacyAutoRestartTimer();
+    this.clearPingTimer();
     this.detachRuntimeListeners();
     this.disposeOpenAuthClient();
     this.openAuthProxyEndpoint = null;
@@ -1276,6 +1301,24 @@ class BotRuntime {
 
         this.pendingAuthState = null;
       });
+
+      this.addRuntimeListener(bot._client, 'ping_response', (packet) => {
+        this.handlePingResponse(packet);
+      });
+      this.pingTimer = setInterval(() => {
+        if (!this.bot || !this.bot._client || this.bot._client.state !== 'play') {
+          return;
+        }
+        this.pendingPingId = Date.now();
+        try {
+          this.bot._client.write('ping_request', { id: BigInt(this.pendingPingId) });
+        } catch (error) {
+          this.pendingPingId = null;
+        }
+      }, 2000);
+      if (this.pingTimer && typeof this.pingTimer.unref === 'function') {
+        this.pingTimer.unref();
+      }
 
       if (bot._client.deserializer) {
         this.addRuntimeListener(bot._client.deserializer, 'malformed_packet_ignored', (info) => {
@@ -1423,6 +1466,7 @@ class BotRuntime {
     this.clearRestartTimer();
     this.clearStartupWarningTimer();
     this.clearLegacyAutoRestartTimer();
+    this.clearPingTimer();
     this.disposeOpenAuthClient();
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_STOP, { reason });
 
@@ -1574,6 +1618,7 @@ class BotRuntime {
   }
 
   async finalizeEndedBot(endedBot, reason = 'end', options = {}) {
+    this.clearPingTimer();
     this.disposeOpenAuthClient();
     this.detachRuntimeListeners();
     this.detachFeaturesFromBot();
@@ -1984,6 +2029,10 @@ class BotRuntime {
   getPingText() {
     if (!this.bot) {
       return '机器人尚未连接';
+    }
+
+    if (Number.isFinite(this.latencyMs)) {
+      return `Ping: ${this.latencyMs}ms`;
     }
 
     const me = this.bot.player || (this.bot.players && this.bot.players[this.bot.username]);

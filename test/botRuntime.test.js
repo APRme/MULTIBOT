@@ -1197,6 +1197,30 @@ test('BotRuntime getPingText falls back to players map and handles missing ping'
   assert.equal(runtime.getPingText(), '机器人尚未连接');
 });
 
+test('BotRuntime getPingText prefers measured RTT over player_info latency', () => {
+  const runtime = createRuntime();
+  runtime.bot = { username: 'alpha', player: { ping: 42 } };
+  runtime.latencyMs = 87;
+  assert.equal(runtime.getPingText(), 'Ping: 87ms');
+});
+
+test('BotRuntime handles ping_response and computes RTT', () => {
+  const runtime = createRuntime();
+  const sentAt = Date.now() - 50;
+  runtime.pendingPingId = sentAt;
+  runtime.handlePingResponse({ id: sentAt });
+  assert.ok(Math.abs(runtime.latencyMs - 50) < 5);
+  assert.equal(runtime.pendingPingId, null);
+});
+
+test('BotRuntime ignores stale ping_response', () => {
+  const runtime = createRuntime();
+  runtime.pendingPingId = 12345;
+  runtime.handlePingResponse({ id: 99999 });
+  assert.equal(runtime.latencyMs, null);
+  assert.equal(runtime.pendingPingId, 12345);
+});
+
 test('BotRuntime applyPhysicsStandby is a no-op when standby disabled', () => {
   const runtime = createRuntime();
   runtime.bot = { physicsEnabled: true };
