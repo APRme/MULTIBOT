@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Runtime caches and auth/session data
+auth-cache/
+sessions/
+
+# Runtime outputs
+logs/
+replays/
+memory_dump/
+
+# Local-only replay recorder implementation and its direct tests
+/flashback-recorder/
+/test/flashbackRecorderCapabilities.test.js
+/test/flashbackRecorderState.test.js
+
+# Local bot instances may contain account names, server details, and private whitelists.
+BOTS/
+
+# Local config overrides
+*.local.json
+*.local.js
+
+# Production master config contains local tokens and paths.
+multibot.config.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Reasonix auto-generated files
+.reasonix/
+
+# npm debug output
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

@@ -1,0 +1,58 @@
+{
+  "api": {
+    "host": "127.0.0.1",
+    "port": 18080,
+    "token": "change-me"
+  },
+  "protocolGuard": {
+    "enabled": true,
+    "ignoreMalformedNbtArrayPackets": true,
+    "burstLimit": 20,
+    "burstWindowMs": 60000,
+    "logParseErrors": false
+  },
+  "diagnostics": {
+    "memoryLogger": {
+      "enabled": true,
+      "intervalMs": 10000,
+      "filePath": "./logs/memory-monitor.log"
+    },
+    "memoryDetails": {
+      "enabled": true
+    },
+    "apiAccessLogger": {
+      "enabled": true,
+      "filePath": "./logs/api-access.log"
+    },
+    "lifecycleLogger": {
+      "enabled": true,
+      "filePath": "./logs/lifecycle.log"
+    }
+  },
+  "aggregateLogging": {
+    "enabled": true,
+    "chat": true,
+    "playerList": true,
+    "chatBatchWindowMs": 100,
+    "playerListIntervalMinutes": 1
+  },
+  "consoleConnector": {
+    "historyLimit": 300
+  },
+  "defaults": {
+    "auth": "microsoft",
+    "version": "1.21.11",
+    "viewDistance": "tiny",
+    "disableChatSigning": true,
+    "checkTimeoutInterval": 30000,
+    "autoStart": false,
+    "restartOnDisconnect": true,
+    "restartDelayMs": 60000,
+    "restartJitterMs": 120000
+  },
+  "discovery": {
+    "enabled": true,
+    "botsRoot": "./BOTS"
+  },
+  "bots": []
+}

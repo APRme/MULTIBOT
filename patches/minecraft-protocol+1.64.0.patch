@@ -1,0 +1,29 @@
+diff --git a/node_modules/minecraft-protocol/src/client/microsoftAuth.js b/node_modules/minecraft-protocol/src/client/microsoftAuth.js
+index 8aea989..a592f6a 100644
+--- a/node_modules/minecraft-protocol/src/client/microsoftAuth.js
++++ b/node_modules/minecraft-protocol/src/client/microsoftAuth.js
+@@ -19,6 +19,24 @@ async function authenticate (client, options) {
+   validateOptions(options)
+ 
+   if (!client.authflow) client.authflow = new PrismarineAuth(options.username, options.profilesFolder, options, options.onMsaCode)
++
++  if (options.session && options.session.accessToken && options.session.selectedProfile) {
++    debug('[microsoft-auth] using cached session')
++
++    const session = options.session
++    const profile = session.selectedProfile
++    const token = session.accessToken
++
++    options.haveCredentials = token !== null
++    client.session = session
++    client.username = profile.name
++    options.accessToken = token
++
++    client.emit('session', session)
++    options.connect(client)
++    return
++  }
++
+   const { token, entitlements, profile, certificates } = await client.authflow.getMinecraftJavaToken({ fetchProfile: true, fetchCertificates: !options.disableChatSigning }).catch(e => {
+     if (options.password) console.warn('Sign in failed, try removing the password field\n')
+     if (e.toString().includes('Not Found')) console.warn(`Please verify that the account ${options.username} owns Minecraft\n`)

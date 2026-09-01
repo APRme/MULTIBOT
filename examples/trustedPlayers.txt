@@ -1,0 +1,5 @@
+# Shared trusted players for private chat commands and tpahere
+# One player name per line
+example_player
+ExampleOwner
+ExampleAdmin
