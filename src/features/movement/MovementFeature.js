@@ -5,11 +5,13 @@ const { buildDefaultMovements } = require('../../util/pathfinding');
 class MovementFeature {
   constructor(options = {}) {
     this.logger = options.logger;
+    this.setPhysicsEnabled = options.setPhysicsEnabled || (() => {});
     this.bot = null;
     this.isSneaking = false;
     this.isCircling = false;
     this.circleInterval = null;
     this.circleCenter = null;
+    this.goalListener = null;
   }
 
   attach(bot) {
@@ -34,6 +36,13 @@ class MovementFeature {
   goto(x, y, z, movementOptions = []) {
     this.ensurePathfinderReady();
     this.stopCircle();
+
+    this.setPhysicsEnabled(true);
+    if (this.goalListener && this.bot) {
+      this.bot.removeListener('goal_reached', this.goalListener);
+    }
+    this.goalListener = () => this.setPhysicsEnabled(false);
+    this.bot.once('goal_reached', this.goalListener);
 
     const movements = buildDefaultMovements(this.bot, movementOptions);
     this.bot.pathfinder.setMovements(movements);
@@ -91,6 +100,7 @@ class MovementFeature {
 
     this.bot.setControlState('sneak', true);
     this.isSneaking = true;
+    this.setPhysicsEnabled(true);
     context.replyInfo('已开始蹲下，再次发送 shift 停止');
     return true;
   }
@@ -114,6 +124,7 @@ class MovementFeature {
     this.stopCircle();
 
     this.isCircling = true;
+    this.setPhysicsEnabled(true);
     this.circleCenter = this.bot.entity && this.bot.entity.position
       ? this.bot.entity.position.clone()
       : null;
@@ -143,6 +154,7 @@ class MovementFeature {
 
   stopCircle() {
     this.isCircling = false;
+    this.setPhysicsEnabled(false);
     this.circleCenter = null;
 
     if (this.circleInterval) {
@@ -162,6 +174,7 @@ class MovementFeature {
       this.bot.setControlState('sneak', false);
     }
     this.isSneaking = false;
+    this.setPhysicsEnabled(false);
   }
 
   getState() {
@@ -174,6 +187,11 @@ class MovementFeature {
   stop() {
     this.stopCircle();
     this.stopSneak();
+    this.setPhysicsEnabled(false);
+    if (this.goalListener && this.bot) {
+      this.bot.removeListener('goal_reached', this.goalListener);
+      this.goalListener = null;
+    }
 
     if (this.bot && this.bot.pathfinder) {
       try {

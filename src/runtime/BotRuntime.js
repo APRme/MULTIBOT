@@ -384,6 +384,7 @@ class BotRuntime {
     this.lastFailureAt = null;
     this.pendingAuthState = null;
     this.capabilities = normalizeCapabilitiesConfig(this.config.legacyConfig);
+    this.physicsStandbyEnabled = this.config.legacyConfig?.behavior?.physicsStandby === true;
     this.diagnostics = {
       connectionCount: 0,
       currentConnectionStartedAt: null,
@@ -424,10 +425,12 @@ class BotRuntime {
       botId: this.config.id
     });
     this.movementFeature = new MovementFeature({
-      logger: this.logger
+      logger: this.logger,
+      setPhysicsEnabled: (enabled) => this.applyPhysicsStandby(enabled)
     });
     this.rideFeature = new RideFeature({
-      logger: this.logger
+      logger: this.logger,
+      setPhysicsEnabled: (enabled) => this.applyPhysicsStandby(enabled)
     });
     this.fishFeature = new FishFeature({
       logger: this.logger,
@@ -559,6 +562,14 @@ class BotRuntime {
   logCapabilitySkip(featureName, detail) {
     const suffix = detail ? ` ${detail}` : '';
     this.logger.info(`[CAP] skip ${featureName}${suffix}`);
+  }
+
+  applyPhysicsStandby(enabled) {
+    if (!this.physicsStandbyEnabled || !this.bot) {
+      return;
+    }
+
+    this.bot.physicsEnabled = enabled === true;
   }
 
   handleMsaCode(response) {
@@ -1361,6 +1372,7 @@ class BotRuntime {
       this.pendingRestartScheduledAt = null;
       this.clearFailureState();
       this.state = 'online';
+      this.applyPhysicsStandby(false);
       this.spawnCount += 1;
       this.restartAttempt = 0;
       this.restartScheduleExhausted = false;

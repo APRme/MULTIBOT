@@ -1197,6 +1197,40 @@ test('BotRuntime getPingText falls back to players map and handles missing ping'
   assert.equal(runtime.getPingText(), '机器人尚未连接');
 });
 
+test('BotRuntime applyPhysicsStandby is a no-op when standby disabled', () => {
+  const runtime = createRuntime();
+  runtime.bot = { physicsEnabled: true };
+  runtime.applyPhysicsStandby(false);
+  runtime.applyPhysicsStandby(true);
+  assert.equal(runtime.bot.physicsEnabled, true);
+});
+
+test('BotRuntime applyPhysicsStandby controls physics when enabled', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: {
+        trustedPlayers: [],
+        autoRestart: 0,
+        teleport: { mode: 'whitelist', whitelistFile: 'whitelist.txt' },
+        logging: {},
+        behavior: { physicsStandby: true },
+        display: {},
+        fish: false,
+        ScriptScheduler: { Enabled: false, TaskList: [] },
+        attack: { autoAttack: false, attackRange: 3, attackInterval: 2000, targetFilter: {} },
+        blockBreakDetection: { enabled: false, alertTrustedPlayers: [], monitoredBlocks: [] },
+        monitoring: { enabled: false, targetTypes: [] },
+        recording: { enabled: false }
+      }
+    }
+  });
+  runtime.bot = { physicsEnabled: true };
+  runtime.applyPhysicsStandby(false);
+  assert.equal(runtime.bot.physicsEnabled, false);
+  runtime.applyPhysicsStandby(true);
+  assert.equal(runtime.bot.physicsEnabled, true);
+});
+
 test('BotRuntime accepts resource packs when enabled in config', () => {
   const runtime = createRuntime({
     config: {

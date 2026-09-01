@@ -96,6 +96,7 @@
 - `ScriptScheduler`
 - `recording`
 - `behavior.enableResourcePack`
+- `behavior.physicsStandby`：挂机 bot 空闲时关闭物理模拟省 CPU，移动/骑乘/蹲下时自动恢复
 - `server.json -> openAuth`：通过本机 ViaProxy/OpenAuth 连接 26.1.2
 - 旧版 `autoRestart`：bot `spawn` 后按分钟数主动重启
 

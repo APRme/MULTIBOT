@@ -8,6 +8,7 @@ function sleep(ms) {
 class RideFeature {
   constructor(options = {}) {
     this.logger = options.logger;
+    this.setPhysicsEnabled = options.setPhysicsEnabled || (() => {});
     this.bot = null;
     this.isRiding = false;
     this.vehicleMovementInterval = null;
@@ -25,6 +26,7 @@ class RideFeature {
 
     this.addListener(bot, 'mount', () => {
       this.isRiding = true;
+      this.setPhysicsEnabled(true);
       if (this.logger) {
         this.logger.info('[RIDE] mounted');
       }
@@ -32,6 +34,7 @@ class RideFeature {
 
     this.addListener(bot, 'dismount', () => {
       this.isRiding = false;
+      this.setPhysicsEnabled(false);
       this.stopVehicleMovement();
       if (this.logger) {
         this.logger.info('[RIDE] dismounted');
@@ -377,6 +380,7 @@ class RideFeature {
   stop() {
     this.stopVehicleMovement();
     this.isRiding = Boolean(this.bot && this.bot.vehicle);
+    this.setPhysicsEnabled(false);
   }
 
   detach() {

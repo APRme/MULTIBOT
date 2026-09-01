@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('events');
 const { Vec3 } = require('vec3');
 const { MovementFeature } = require('../src/features/movement/MovementFeature');
 
@@ -13,8 +14,13 @@ function createContext() {
 function createBot() {
   const controlStates = new Map();
   const calls = [];
+  const emitter = new EventEmitter();
   const bot = {
     calls,
+    on: emitter.on.bind(emitter),
+    once: emitter.once.bind(emitter),
+    removeListener: emitter.removeListener.bind(emitter),
+    emit: emitter.emit.bind(emitter),
     registry: {
       blocksByName: {
         chest: { id: 1 },
@@ -183,4 +189,42 @@ test('MovementFeature goto defaults to walk-only movements and enables requested
   assert.equal(captured.allowSprinting, false);
   assert.equal(captured.allow1by1towers, false);
   assert.equal(captured.allowParkour, false);
+});
+
+test('MovementFeature physics standby toggles with sneak and circle actions', () => {
+  const bot = createBot();
+  const physicsCalls = [];
+  const feature = new MovementFeature({
+    setPhysicsEnabled: (on) => physicsCalls.push(on)
+  });
+  feature.attach(bot);
+
+  feature.toggleSneak(createContext());
+  assert.equal(physicsCalls[physicsCalls.length - 1], true);
+  feature.toggleSneak(createContext());
+  assert.equal(physicsCalls[physicsCalls.length - 1], false);
+
+  feature.toggleCircle(createContext());
+  assert.equal(physicsCalls[physicsCalls.length - 1], true);
+  feature.stopCircle();
+  assert.equal(physicsCalls[physicsCalls.length - 1], false);
+
+  feature.stop();
+  assert.equal(physicsCalls[physicsCalls.length - 1], false);
+});
+
+test('MovementFeature goto enables physics and disables on goal reached', () => {
+  const bot = createBot();
+  bot.registry = require('minecraft-data')('1.21.1');
+  const physicsCalls = [];
+  const feature = new MovementFeature({
+    setPhysicsEnabled: (on) => physicsCalls.push(on)
+  });
+  feature.attach(bot);
+
+  feature.goto(10, 64, 20, []);
+  assert.equal(physicsCalls[physicsCalls.length - 1], true);
+
+  bot.emit('goal_reached');
+  assert.equal(physicsCalls[physicsCalls.length - 1], false);
 });

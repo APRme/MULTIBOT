@@ -755,6 +755,7 @@ ServerOwner
 | `behavior.enableSpawnActions` | boolean | `false` | 兼容保留字段，当前未迁移 |
 | `behavior.whitelistReloadMinutes` | number | `30` | 兼容保留字段，当前不再驱动定时刷新 |
 | `behavior.enableResourcePack` | boolean | `false` | 是否接受服务器资源包 |
+| `behavior.physicsStandby` | boolean | `false` | 挂机省电：空闲时关闭 mineflayer 物理模拟（`bot.physicsEnabled=false`），移动/骑乘/蹲下时自动恢复 |
 
 说明：
 

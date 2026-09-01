@@ -190,7 +190,8 @@ function getDefaultLegacyConfig() {
     behavior: {
       enableSpawnActions: false,
       whitelistReloadMinutes: 30,
-      enableResourcePack: false
+      enableResourcePack: false,
+      physicsStandby: false
     },
     capabilities: {
       entityHandling: true,
