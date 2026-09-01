@@ -215,6 +215,21 @@ function createDispatcher(calls, overrides = {}) {
   });
 }
 
+test('CommandDispatcher getping reports latency from runtime', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher(calls, {
+    runtime: {
+      getPingText() {
+        return 'Ping: 42ms';
+      }
+    }
+  });
+  const context = createContext();
+  const handled = await dispatcher.dispatch('getping', context);
+  assert.equal(handled, true);
+  assert.deepEqual(context.messages, [{ type: 'info', message: 'Ping: 42ms' }]);
+});
+
 test('CommandDispatcher routes migrated MULTIBOT commands', async () => {
   const calls = [];
   const dispatcher = createDispatcher(calls);

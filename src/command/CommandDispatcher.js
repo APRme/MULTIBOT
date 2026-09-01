@@ -97,6 +97,7 @@ class CommandDispatcher {
       '可用命令:',
       '  health',
       '  getpos',
+      '  getping',
       '  send <内容>',
       '  broadcast send <内容> | broadcast inv <子命令> | broadcast eat <物品id>',
       '  inv ...',
@@ -174,6 +175,11 @@ class CommandDispatcher {
 
     if (command === 'getpos' && rawParts.length === 1) {
       context.replyInfo(this.runtime.getPositionText());
+      return true;
+    }
+
+    if (command === 'getping' && rawParts.length === 1) {
+      context.replyInfo(this.runtime.getPingText());
       return true;
     }
 

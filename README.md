@@ -37,6 +37,7 @@
 
 - `health`
 - `getpos`
+- `getping`
 - `send <内容>`
 - `broadcast send <内容>`
 - `broadcast inv <子命令>`

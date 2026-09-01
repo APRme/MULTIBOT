@@ -1969,6 +1969,16 @@ class BotRuntime {
     return `位置: ${pos.x.toFixed(2)} ${pos.y.toFixed(2)} ${pos.z.toFixed(2)}`;
   }
 
+  getPingText() {
+    if (!this.bot) {
+      return '机器人尚未连接';
+    }
+
+    const me = this.bot.player || (this.bot.players && this.bot.players[this.bot.username]);
+    const ping = me && Number.isFinite(me.ping) ? me.ping : null;
+    return ping === null ? '暂无延迟数据' : `Ping: ${ping}ms`;
+  }
+
   getEntityListText() {
     if (!this.isEntityHandlingEnabled()) {
       return '该实例已禁用实体处理，无法查看实体列表';

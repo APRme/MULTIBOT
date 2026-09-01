@@ -1173,6 +1173,30 @@ test('BotRuntime denies resource packs by default', () => {
   ]);
 });
 
+test('BotRuntime getPingText reports server-measured latency', () => {
+  const runtime = createRuntime();
+  runtime.bot = {
+    username: 'alpha',
+    player: { ping: 42 }
+  };
+  assert.equal(runtime.getPingText(), 'Ping: 42ms');
+});
+
+test('BotRuntime getPingText falls back to players map and handles missing ping', () => {
+  const runtime = createRuntime();
+  runtime.bot = {
+    username: 'alpha',
+    players: { alpha: { ping: 17 } }
+  };
+  assert.equal(runtime.getPingText(), 'Ping: 17ms');
+
+  runtime.bot = { username: 'alpha', player: {} };
+  assert.equal(runtime.getPingText(), '暂无延迟数据');
+
+  runtime.bot = null;
+  assert.equal(runtime.getPingText(), '机器人尚未连接');
+});
+
 test('BotRuntime accepts resource packs when enabled in config', () => {
   const runtime = createRuntime({
     config: {
