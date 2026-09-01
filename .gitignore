@@ -34,6 +34,9 @@ Thumbs.db
 # Reasonix auto-generated files
 .reasonix/
 
+# Workspace-local agent instructions (maintained locally, not versioned)
+/AGENTS.md
+
 # npm debug output
 npm-debug.log*
 yarn-debug.log*
