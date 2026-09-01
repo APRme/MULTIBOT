@@ -987,7 +987,7 @@ ServerOwner
 
 | 字段 | 类型 | 代码默认 | 说明 |
 | --- | --- | --- | --- |
-| `recording.enabled` | boolean | `false` | 是否启用本地可选录制器；公开仓库不包含其实现，缺少模块时状态为 `unavailable` 且不影响 Bot 启动 |
+| `recording.enabled` | boolean | `false` | 是否启用本地可选录制器；缺少模块时状态为 `unavailable` 且不影响 Bot 启动 |
 | `recording.outputDir` | string | `MULTIBOT/replays` | 输出目录；相对路径按 bot 目录解析 |
 | `recording.bootstrapWindowTicks` | integer | `20` | 登录后 bootstrap 物理帧窗口 |
 | `recording.bootstrapTimeoutMs` | integer | `5000` | bootstrap 超时，毫秒 |
@@ -1056,7 +1056,7 @@ ServerOwner
 | `recording.debugLogFileEnabled` | 已出现在 legacy 默认配置里，但当前 `RecorderFeature` 未透传 |
 | `recording.debugLogFilePath` | 已出现在 legacy 默认配置里，但当前 `RecorderFeature` 未透传 |
 
-`RecorderFeature` 是本地可选模块的适配层。公开仓库不包含 `flashback-recorder` 实现，也不代表与 Flashback 官方项目或其作者存在关联；没有本地模块时，录制相关命令仍可查询状态或安全结束空实现，其余 Bot 功能保持可用。
+`RecorderFeature` 是本地可选模块的适配层。没有本地模块时，录制相关命令仍可查询状态或安全结束空实现，其余 Bot 功能保持可用。
 
 ### 4.12 能力开关与录制器联动
 

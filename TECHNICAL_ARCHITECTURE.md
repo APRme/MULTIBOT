@@ -59,7 +59,7 @@ MultibotApp
 - `InstanceService` 管理 `BOTS/` 目录中的实例文件
 - `SessionService` 负责 `MULTIBOT/sessions`
 - `createAuthCacheFactory()` 负责 `MULTIBOT/auth-cache`
-- `RecorderFeature` 提供可选本地录制器适配；公开仓库不包含录制器实现
+- `RecorderFeature` 提供可选本地录制器适配
 
 ### 2.2 代码目录职责
 
@@ -72,7 +72,7 @@ MULTIBOT/
 ├─ sessions/
 ├─ replays/
 ├─ logs/
-├─ flashback-recorder/       # 本地可选目录，Git 忽略且不公开分发
+├─ flashback-recorder/       # 本地可选目录，Git 忽略
 └─ src/
    ├─ app/
    ├─ command/
@@ -107,7 +107,7 @@ MULTIBOT/
 - `src/session`
   - 认证 session 与底层 auth cache 处理
 - `flashback-recorder`
-  - 本地可选录制器目录，不属于公开仓库内容
+  - 本地可选录制器目录
 - `src/legacy/assn`
   - 允许复用的旧模块复制件
 
@@ -753,7 +753,7 @@ feature 通常遵循以下模式：
 
 ### 12.1 本地可选录制器边界
 
-公开仓库只保留 `RecorderFeature` 适配层，不包含或分发 `MULTIBOT/flashback-recorder` 实现。本地开发可以在被 Git 忽略的同名目录中放置录制器；目录缺失时适配层提供 `unavailable` 空实现，不阻止 MULTIBOT 或 Bot 启动。该接口不代表与 Flashback 官方项目或其作者存在关联，也不声明获得其授权。
+`RecorderFeature` 是本地可选模块的适配层；本地开发可以在被 Git 忽略的同名目录中放置录制器。目录缺失时适配层提供 `unavailable` 空实现，不阻止 MULTIBOT 或 Bot 启动。
 
 ### 12.2 `RecorderFeature`
 
@@ -1176,7 +1176,7 @@ feature 通常遵循以下模式：
 
 ### 19.3 更深的 recorder 优化
 
-适合放在 `RecorderFeature`；本地录制器实现位于被 Git 忽略的 `flashback-recorder/` 时，应继续保持为本地可选模块，不反向依赖外部旧实现，也不加入公开仓库。
+适合放在 `RecorderFeature`；本地录制器实现位于被 Git 忽略的 `flashback-recorder/` 时，应继续保持为本地可选模块，不反向依赖外部旧实现。
 
 ### 19.4 更彻底的轻量化
 
