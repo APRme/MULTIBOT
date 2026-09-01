@@ -1,4 +1,4 @@
-﻿# MULTIBOT
+# MULTIBOT
 
 `MULTIBOT` 是一个基于 `mineflayer` 的单进程多 bot 管理后端，用于 Minecraft 挂机 bot 的集中运行与控制。
 
@@ -8,7 +8,7 @@
 - **多种控制方式**：游戏内 whisper 私聊命令、HTTP API、SSE 事件流，以及 `console-connector` 控制台连接器
 - **挂机与行为**：移动、挖掘、放置、钓鱼、进食、攻击、骑乘、脚本调度等按配置启用的行为能力
 - **物品与容器**：背包查看/移动、箱子存取、快捷栏切换
-- **录制回放接口**：支持加载本地可选录制器；公开仓库不包含录制器实现
+- **录制回放接口**：支持加载本地可选录制器
 - **账户会话**：Microsoft 会话缓存与 OpenAuth 设备码登录，支持离线模式与代理场景
 
 技术栈：Node.js + `mineflayer` / `minecraft-protocol`，目标 Minecraft 版本 1.21.x。
@@ -21,8 +21,6 @@
 本项目代码保留所有权利（All Rights Reserved）：未经作者书面许可，不得复制、修改、分发或用于商业用途。
 
 例外：`patches/` 目录下的补丁文件，以及与 `mineflayer`、`minecraft-protocol` 等本体相关的代码，遵循其各自的原始许可证（MIT / BSD-3-Clause）规定。
-
-公开仓库不包含 `flashback-recorder` 的实现。`RecorderFeature` 只是可选本地模块的适配层；缺少该模块时录制状态为 `unavailable`，不会阻止 MULTIBOT 或 Bot 启动。本项目不是 Flashback 官方项目，不代表与其作者存在关联，也不声明获得其授权。
 
 ## 当前范围
 
@@ -131,7 +129,6 @@
 ## 目录约束
 
 - 复用的旧逻辑统一收在 `MULTIBOT/src/legacy`，不在 MULTIBOT 外引用代码
-- 本地录制器可放在被 Git 忽略的 `MULTIBOT/flashback-recorder`；公开仓库不分发该目录
 
 ## 共享默认配置
 
