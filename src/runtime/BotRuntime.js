@@ -1114,7 +1114,9 @@ class BotRuntime {
         ? {
             ended: client.ended === true,
             state: client.state || null,
-            socketDestroyed: socket ? socket.destroyed === true : null
+            socketDestroyed: socket ? socket.destroyed === true : null,
+            bytesRead: socket && Number.isFinite(socket.bytesRead) ? socket.bytesRead : null,
+            bytesWritten: socket && Number.isFinite(socket.bytesWritten) ? socket.bytesWritten : null
           }
         : null,
       chunkPackets: {

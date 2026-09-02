@@ -329,7 +329,9 @@ test('BotRuntime reports lightweight memory diagnostics without serializing colu
       ended: false,
       state: 'play',
       socket: {
-        destroyed: false
+        destroyed: false,
+        bytesRead: 12345,
+        bytesWritten: 6789
       }
     }
   };
@@ -347,6 +349,8 @@ test('BotRuntime reports lightweight memory diagnostics without serializing colu
   assert.equal(diagnostics.players, 2);
   assert.equal(diagnostics.pathfinderLoaded, true);
   assert.equal(diagnostics.client.ended, false);
+  assert.equal(diagnostics.client.bytesRead, 12345);
+  assert.equal(diagnostics.client.bytesWritten, 6789);
   assert.equal(diagnostics.chunkPackets.total.mapChunk, 12);
   assert.equal(diagnostics.chunkPackets.currentConnection.mapChunk, 5);
   assert.equal(diagnostics.chunkPackets.maxWorldColumns, 3);
