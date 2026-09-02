@@ -951,7 +951,8 @@ class BotRuntime {
       label: sender || source,
       replyFn: (entry) => {
         if (source === 'whisper' && sender && this.bot) {
-          const command = entry.mode === 'whisper' ? '/minecraft:w' : '/tell';
+          // 原版 1.21.11 不支持带命名空间前缀的 /minecraft:w，使用 /w 与 /tell
+          const command = entry.mode === 'whisper' ? '/w' : '/tell';
           this.bot.chat(`${command} ${sender} ${entry.message}`);
         }
 
@@ -2045,16 +2046,22 @@ class BotRuntime {
   }
 
   getHealthText() {
-    if (!this.bot || !this.bot.entity) {
-      return '机器人尚未生成';
+    if (!this.bot) {
+      return '机器人尚未连接';
+    }
+    if (!this.bot.entity) {
+      return this.isLightweightMode() ? '实体处理已禁用，无法读取血量' : '机器人尚未生成';
     }
 
     return `血量=${this.bot.health} 饱食度=${this.bot.food} 氧气=${this.bot.oxygenLevel}`;
   }
 
   getPositionText() {
-    if (!this.bot || !this.bot.entity) {
-      return '机器人尚未生成';
+    if (!this.bot) {
+      return '机器人尚未连接';
+    }
+    if (!this.bot.entity) {
+      return this.isLightweightMode() ? '实体处理已禁用，无法读取位置' : '机器人尚未生成';
     }
 
     const pos = this.bot.entity.position;
