@@ -15,12 +15,13 @@
   },
   "logging": {
     "logToFile": true,
-    "logFilePath": "./assn_chat.log",
+    "logFilePath": "./chat.log",
     "logPlayerList": true,
-    "playerListPath": "./assn_playerList.log",
+    "playerListPath": "./playerList.log",
     "playerListIntervalMinutes": 1
   },
   "behavior": {
+    "physicsStandby": true,
     "enableSpawnActions": false,
     "whitelistReloadMinutes": 30,
     "enableResourcePack": true
