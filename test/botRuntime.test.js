@@ -1311,6 +1311,68 @@ test('BotRuntime applyPhysicsStandby controls physics when enabled', () => {
   assert.equal(runtime.bot.physicsEnabled, true);
 });
 
+function makeLegacyConfig(capabilities) {
+  return {
+    trustedPlayers: [],
+    autoRestart: 0,
+    teleport: { mode: 'whitelist', whitelistFile: 'whitelist.txt' },
+    logging: {},
+    behavior: {},
+    capabilities,
+    display: {},
+    fish: false,
+    ScriptScheduler: { Enabled: false, TaskList: [] },
+    attack: { autoAttack: false, attackRange: 3, attackInterval: 2000, targetFilter: {} },
+    blockBreakDetection: { enabled: false, alertTrustedPlayers: [], monitoredBlocks: [] },
+    monitoring: { enabled: false, targetTypes: [] },
+    recording: { enabled: false }
+  };
+}
+
+test('BotRuntime isLightweightMode only when both capabilities are disabled', () => {
+  const full = createRuntime({ config: { legacyConfig: makeLegacyConfig({ entityHandling: true, terrainHandling: true }) } });
+  assert.equal(full.isLightweightMode(), false);
+
+  const noEntity = createRuntime({ config: { legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: true }) } });
+  assert.equal(noEntity.isLightweightMode(), false);
+
+  const noTerrain = createRuntime({ config: { legacyConfig: makeLegacyConfig({ entityHandling: true, terrainHandling: false }) } });
+  assert.equal(noTerrain.isLightweightMode(), false);
+
+  const light = createRuntime({ config: { legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false }) } });
+  assert.equal(light.isLightweightMode(), true);
+});
+
+test('BotRuntime createMineflayerOptions whitelists plugins in lightweight mode', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const options = runtime.createMineflayerOptions(null, null);
+  assert.equal(options.loadInternalPlugins, false);
+  assert.deepEqual(options.plugins, { chat: true, game: true });
+});
+
+test('BotRuntime createMineflayerOptions keeps full plugins in normal mode', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: true, terrainHandling: true })
+    }
+  });
+  const options = runtime.createMineflayerOptions(null, null);
+  assert.equal(options.loadInternalPlugins, undefined);
+  assert.equal(options.plugins, undefined);
+});
+
+test('BotRuntime handleBotReady is guarded against re-entry', () => {
+  const runtime = createRuntime();
+  runtime.state = 'online';
+  const spawnCountBefore = runtime.spawnCount;
+  runtime.handleBotReady();
+  assert.equal(runtime.spawnCount, spawnCountBefore);
+});
+
 test('BotRuntime accepts resource packs when enabled in config', () => {
   const runtime = createRuntime({
     config: {

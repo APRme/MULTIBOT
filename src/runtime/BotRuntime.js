@@ -551,6 +551,13 @@ class BotRuntime {
     return this.getCapabilities().terrainHandling;
   }
 
+  // 轻量模式：entityHandling 与 terrainHandling 同时为 false 时，
+  // mineflayer 只加载 chat/game 插件（不处理区块/实体/物理），
+  // 类似 MCC 的 EntityHandling/TerrainAndMovements 关闭语义。
+  isLightweightMode() {
+    return !this.isEntityHandlingEnabled() && !this.isTerrainHandlingEnabled();
+  }
+
   isMemoryDetailsEnabled() {
     return this.diagnosticsConfig?.memoryDetails?.enabled === true;
   }
@@ -574,6 +581,36 @@ class BotRuntime {
     }
 
     this.bot.physicsEnabled = enabled === true;
+  }
+
+  handleBotReady() {
+    if (this.state === 'online') {
+      return;
+    }
+    this.clearStartupWarningTimer();
+    if (this.isOpenAuthEnabled() && !this.openAuthRequestSeen) {
+      if (this.pendingRestartReason) return;
+      this.stopForOpenAuthFailure('OPENAUTH_REQUEST_MISSING');
+      return;
+    }
+    this.clearOpenAuthRequestWatchdog();
+    this.pendingRestartReason = null;
+    this.pendingRestartDelayOverrideMs = null;
+    this.pendingRestartDelayMs = null;
+    this.pendingRestartScheduledAt = null;
+    this.clearFailureState();
+    this.state = 'online';
+    this.applyPhysicsStandby(false);
+    this.spawnCount += 1;
+    this.restartAttempt = 0;
+    this.restartScheduleExhausted = false;
+    this.lastSpawnAt = new Date().toISOString();
+    this.logger.info('[BOT] spawn');
+    this.recordLifecycle(LIFECYCLE_EVENTS.BOT_SPAWN, { detail: this.lastSpawnAt });
+    this.fishFeature.handleSpawn();
+    this.scriptFeature.onSpawn();
+    this.scheduleLegacyAutoRestart();
+    this.publishStatus();
   }
 
   handlePingResponse(packet) {
@@ -717,6 +754,12 @@ class BotRuntime {
         this.handleMsaCode(response);
       }
     };
+
+    if (this.isLightweightMode()) {
+      // 只加载 chat/game 插件：不处理区块/实体/物理（MCC 式轻量挂机）
+      options.loadInternalPlugins = false;
+      options.plugins = { chat: true, game: true };
+    }
 
     if (this.isOpenAuthEnabled()) {
       if (!openAuthEndpoint || !openAuthEndpoint.address || !openAuthEndpoint.family) {
@@ -1347,11 +1390,16 @@ class BotRuntime {
     }
 
     this.teleportFeature.attach(bot);
-    this.inventoryFeature.attach(bot);
-    this.windowFeature.attach(bot);
-    this.movementFeature.attach(bot);
     this.activityLogFeature.attach(bot);
-    this.eatFeature.attach(bot);
+    if (this.isLightweightMode()) {
+      // 轻量模式：无实体/物理/背包插件，跳过依赖它们的 feature
+      this.logCapabilitySkip('inventory/window/movement/eat', 'because lightweight mode (no entity/terrain)');
+    } else {
+      this.inventoryFeature.attach(bot);
+      this.windowFeature.attach(bot);
+      this.movementFeature.attach(bot);
+      this.eatFeature.attach(bot);
+    }
 
     if (this.isEntityHandlingEnabled()) {
       this.attackFeature.attach(bot);
@@ -1400,32 +1448,20 @@ class BotRuntime {
       this.handleResourcePack(bot, urlOrUuid, hashOrUuid);
     });
 
-    this.addRuntimeListener(bot, 'spawn', () => {
-      this.clearStartupWarningTimer();
-      if (this.isOpenAuthEnabled() && !this.openAuthRequestSeen) {
-        if (this.pendingRestartReason) return;
-        this.stopForOpenAuthFailure('OPENAUTH_REQUEST_MISSING');
-        return;
-      }
-      this.clearOpenAuthRequestWatchdog();
-      this.pendingRestartReason = null;
-      this.pendingRestartDelayOverrideMs = null;
-      this.pendingRestartDelayMs = null;
-      this.pendingRestartScheduledAt = null;
-      this.clearFailureState();
-      this.state = 'online';
-      this.applyPhysicsStandby(false);
-      this.spawnCount += 1;
-      this.restartAttempt = 0;
-      this.restartScheduleExhausted = false;
-      this.lastSpawnAt = new Date().toISOString();
-      this.logger.info('[BOT] spawn');
-      this.recordLifecycle(LIFECYCLE_EVENTS.BOT_SPAWN, { detail: this.lastSpawnAt });
-      this.fishFeature.handleSpawn();
-      this.scriptFeature.onSpawn();
-      this.scheduleLegacyAutoRestart();
-      this.publishStatus();
+    // 轻量模式（无实体/地形插件）不会触发 spawn，改用 login（进入 play）作为就绪信号
+    const botReadyEvent = this.isLightweightMode() ? 'login' : 'spawn';
+    this.addRuntimeListener(bot, botReadyEvent, () => {
+      this.handleBotReady();
     }, { once: true });
+
+    // login 可能在监听注册前已触发（快速重连/登录缓存）——若已在 play 就直接就绪，避免 startup timeout
+    if (this.isLightweightMode() && bot._client && bot._client.state === 'play' && this.state !== 'online') {
+      setImmediate(() => {
+        if (this.state !== 'online' && bot === this.bot) {
+          this.handleBotReady();
+        }
+      });
+    }
 
     this.addRuntimeListener(bot, 'kicked', (reason) => {
       if (epoch !== this.connectionEpoch) {
