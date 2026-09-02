@@ -22,9 +22,14 @@ class BlockBreakFeature {
     this.addListener('blockBreakProgressEnd', (block, entity) => {
       this.handleBlockBreakProgressEnd(block, entity);
     });
-    this.addListener('blockUpdate', (oldBlock, newBlock) => {
-      this.handleBlockUpdate(oldBlock, newBlock);
-    });
+    // Only subscribe to the high-frequency blockUpdate stream when enabled:
+    // an idle subscription would force mineflayer's lazy block-emit patch to
+    // always construct Block objects for every block change packet.
+    if (this.isEnabled()) {
+      this.addListener('blockUpdate', (oldBlock, newBlock) => {
+        this.handleBlockUpdate(oldBlock, newBlock);
+      });
+    }
   }
 
   addListener(eventName, handler) {

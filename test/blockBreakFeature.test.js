@@ -142,3 +142,34 @@ test('BlockBreakFeature ignores creative players when configured', () => {
   assert.equal(bot.chatMessages.length, 0);
   assert.equal(logger.entries.length, 0);
 });
+
+test('BlockBreakFeature only subscribes to blockUpdate when enabled', () => {
+  const disabledBot = createBot();
+  const disabled = new BlockBreakFeature({
+    logger: createLogger(),
+    config: {
+      enabled: false,
+      logToConsole: true,
+      logToFile: false
+    }
+  });
+  disabled.attach(disabledBot);
+  assert.equal(disabledBot.listenerCount('blockUpdate'), 0);
+  assert.equal(disabledBot.listenerCount('blockBreakProgressObserved'), 1);
+  assert.equal(disabledBot.listenerCount('blockBreakProgressEnd'), 1);
+  disabled.stop();
+
+  const enabledBot = createBot();
+  const enabled = new BlockBreakFeature({
+    logger: createLogger(),
+    config: {
+      enabled: true,
+      logToConsole: true,
+      logToFile: false
+    }
+  });
+  enabled.attach(enabledBot);
+  assert.equal(enabledBot.listenerCount('blockUpdate'), 1);
+  enabled.stop();
+  assert.equal(enabledBot.listenerCount('blockUpdate'), 0);
+});

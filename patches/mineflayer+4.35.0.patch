@@ -1,0 +1,52 @@
+diff --git a/node_modules/mineflayer/lib/plugins/physics.js b/node_modules/mineflayer/lib/plugins/physics.js
+index 85c98365b8069a586ab2c152db46853a56d695df..9ed9fa1d05b0a2bc3833a30aa5a3a6de723b4164 100644
+--- a/node_modules/mineflayer/lib/plugins/physics.js
++++ b/node_modules/mineflayer/lib/plugins/physics.js
+@@ -76,6 +76,7 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+   }
+ 
+   function tickPhysics (now) {
++    if (bot._client.state !== 'play') return
+     if (bot.blockAt(bot.entity.position) == null) return // check if chunk is unloaded
+     if (bot.physicsEnabled && shouldUsePhysics) {
+       physics.simulatePlayer(new PlayerState(bot, controlState), world).apply(bot)
+@@ -449,7 +449,8 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
+   }
+ 
+   bot.on('mount', () => { shouldUsePhysics = false })
+   bot.on('respawn', () => { shouldUsePhysics = false })
++  bot._client.on('start_configuration', () => { shouldUsePhysics = false })
+   bot.on('login', () => {
+     shouldUsePhysics = false
+     if (doPhysicsTimer === null) {
+diff --git a/node_modules/mineflayer/lib/plugins/blocks.js b/node_modules/mineflayer/lib/plugins/blocks.js
+index 4c98d57..8577fe8 100644
+--- a/node_modules/mineflayer/lib/plugins/blocks.js
++++ b/node_modules/mineflayer/lib/plugins/blocks.js
+@@ -244,17 +244,19 @@ function inject (bot, { version, storageBuilder, hideErrors }) {
+   })
+ 
+   function updateBlockState (point, stateId) {
+-    const oldBlock = blockAt(point)
+-    bot.world.setBlockStateId(point, stateId)
+-
+-    const newBlock = blockAt(point)
++    const pos = point.floored()
++    const oldType = bot.world.getBlockType(point)
++    const shouldEmit = bot.listenerCount('blockUpdate') > 0 ||
++      bot.listenerCount(`blockUpdate:${pos}`) > 0 ||
++      bot.world.listenerCount(`blockUpdate:${pos}`) > 0
++    bot.world.setBlockStateId(point, stateId, { emit: shouldEmit })
+     // sometimes minecraft server sends us block updates before it sends
+     // us the column that the block is in. ignore this.
+-    if (newBlock === null) {
++    if (bot.world.getColumnAt(point) === null) {
+       return
+     }
+-    if (oldBlock.type !== newBlock.type) {
+-      const pos = point.floored()
++    const newType = bot.world.getBlockType(point)
++    if (oldType !== newType) {
+       const painting = paintingsByPos[pos]
+       if (painting) deletePainting(painting)
+     }

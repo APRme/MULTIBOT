@@ -1,0 +1,25 @@
+diff --git a/node_modules/prismarine-world/src/worldsync.js b/node_modules/prismarine-world/src/worldsync.js
+index 38a6cfc..3231565 100644
+--- a/node_modules/prismarine-world/src/worldsync.js
++++ b/node_modules/prismarine-world/src/worldsync.js
+@@ -149,14 +149,17 @@ class WorldSync extends EventEmitter {
+     this._emitBlockUpdate(oldBlock, block, pos)
+   }
+ 
+-  setBlockStateId (pos, stateId) {
++  setBlockStateId (pos, stateId, options = {}) {
+     const chunk = this.getColumnAt(pos)
+     if (!chunk) return
+     const pInChunk = posInChunk(pos)
+-    const oldBlock = chunk.getBlock(pInChunk)
++    const shouldEmit = options.emit !== false
++    const oldBlock = shouldEmit ? chunk.getBlock(pInChunk) : null
+     chunk.setBlockStateId(pInChunk, stateId)
+     this.async.saveAt(pos)
+-    this._emitBlockUpdate(oldBlock, chunk.getBlock(pInChunk), pos)
++    if (shouldEmit) {
++      this._emitBlockUpdate(oldBlock, chunk.getBlock(pInChunk), pos)
++    }
+   }
+ 
+   setBlockType (pos, blockType) {
