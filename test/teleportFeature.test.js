@@ -70,11 +70,11 @@ test('TeleportFeature whitelist cache auto refreshes via fs.watch and stops watc
   assert.equal(info.count, 1);
   assert.deepEqual(chats, [
     '/tpaccept',
-    '/w example_player 已接受你的传送请求。',
+    '/minecraft:w example_player 已接受你的传送请求。',
     '/tpdeny',
     '/tpdeny',
     '/tpaccept',
-    '/w Other 已接受你的传送请求。'
+    '/minecraft:w Other 已接受你的传送请求。'
   ]);
   feature.stop();
   assert.equal(feature.whitelistWatcher, null);
@@ -110,7 +110,7 @@ test('TeleportFeature supports trustedPlayers teleport mode', (t) => {
 
   assert.deepEqual(chats, [
     '/tpaccept',
-    '/w example_player 已接受你的传送请求。',
+    '/minecraft:w example_player 已接受你的传送请求。',
     '/tpdeny'
   ]);
   assert.deepEqual(logs.filter((message) => message.includes('接受') || message.includes('拒绝')), [
@@ -186,8 +186,8 @@ test('TeleportFeature tpahere obeys lock and owner bypass', (t) => {
 
   assert.deepEqual(chats, [
     '/tpdeny',
-    '/w example_player 已锁定，锁定人: Owner 原因: busy 剩余锁定时间: 30s',
+    '/minecraft:w example_player 已锁定，锁定人: Owner 原因: busy 剩余锁定时间: 30s',
     '/tpaccept',
-    '/w Owner 已接受你的传送请求。'
+    '/minecraft:w Owner 已接受你的传送请求。'
   ]);
 });

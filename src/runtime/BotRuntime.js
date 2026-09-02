@@ -756,9 +756,10 @@ class BotRuntime {
     };
 
     if (this.isLightweightMode()) {
-      // 只加载 chat/game 插件：不处理区块/实体/物理（MCC 式轻量挂机）
+      // 只加载 chat/game/health 插件：不处理区块/实体/物理（MCC 式轻量挂机）
+      // health 插件仅依赖 update_health 协议包，用于读取血量/饱食度
       options.loadInternalPlugins = false;
-      options.plugins = { chat: true, game: true };
+      options.plugins = { chat: true, game: true, health: true };
     }
 
     if (this.isOpenAuthEnabled()) {
@@ -951,8 +952,9 @@ class BotRuntime {
       label: sender || source,
       replyFn: (entry) => {
         if (source === 'whisper' && sender && this.bot) {
-          // 原版 1.21.11 不支持带命名空间前缀的 /minecraft:w，使用 /w 与 /tell
-          const command = entry.mode === 'whisper' ? '/w' : '/tell';
+          // 私聊回复使用 /minecraft:w（插件服中 /w 常被插件命令占用，
+          // 命名空间命令强制走原版私聊；本地原版服不支持属环境差异）
+          const command = entry.mode === 'whisper' ? '/minecraft:w' : '/tell';
           this.bot.chat(`${command} ${sender} ${entry.message}`);
         }
 
@@ -2049,11 +2051,12 @@ class BotRuntime {
     if (!this.bot) {
       return '机器人尚未连接';
     }
-    if (!this.bot.entity) {
-      return this.isLightweightMode() ? '实体处理已禁用，无法读取血量' : '机器人尚未生成';
-    }
 
-    return `血量=${this.bot.health} 饱食度=${this.bot.food} 氧气=${this.bot.oxygenLevel}`;
+    // health 由 health 插件维护（update_health 包），不依赖实体/地形处理
+    const health = Number.isFinite(this.bot.health) ? this.bot.health : '?';
+    const food = Number.isFinite(this.bot.food) ? this.bot.food : '?';
+    const oxygen = Number.isFinite(this.bot.oxygenLevel) ? this.bot.oxygenLevel : '?';
+    return `血量=${health} 饱食度=${food} 氧气=${oxygen}`;
   }
 
   getPositionText() {

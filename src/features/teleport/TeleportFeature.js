@@ -164,7 +164,7 @@ class TeleportFeature {
     }
     if (!this.bot) return;
     this.bot.chat('/tpaccept');
-    this.bot.chat(`/w ${sender} 已接受你的传送请求。`);
+    this.bot.chat(`/minecraft:w ${sender} 已接受你的传送请求。`);
   }
 
   denyTeleport(sender, reason = 'denied') {
@@ -217,7 +217,7 @@ class TeleportFeature {
     this.denyTeleport(sender, `传送锁定，锁定人=${lockStatus.owner} 原因=${lockStatus.reason}`);
     if (this.bot) {
       this.bot.chat(
-        `/w ${sender} 已锁定，锁定人: ${lockStatus.owner} 原因: ${lockStatus.reason} 剩余锁定时间: ${lockStatus.remainingText}`
+        `/minecraft:w ${sender} 已锁定，锁定人: ${lockStatus.owner} 原因: ${lockStatus.reason} 剩余锁定时间: ${lockStatus.remainingText}`
       );
     }
 
