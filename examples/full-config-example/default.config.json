@@ -33,6 +33,9 @@
   "display": {
     "consoleUseAnsi": false
   },
+  "chat": {
+    "unknownWhisperReply": ""
+  },
   "fish": false,
   "ScriptScheduler": {
     "Enabled": true,

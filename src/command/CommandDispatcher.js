@@ -544,7 +544,17 @@ class CommandDispatcher {
     }
 
     if (context && context.source !== 'console') {
-      context.replyInfo(`命令未迁移或未识别: ${trimmed}`);
+      if (context.source === 'whisper') {
+        // whisper 非命令内容：空字符串=静默不回复，非空=回复配置文本
+        const unknownReply = this.runtime && this.runtime.config
+          ? (this.runtime.config.legacyConfig?.chat?.unknownWhisperReply || '')
+          : '';
+        if (unknownReply) {
+          context.replyInfo(unknownReply);
+        }
+      } else {
+        context.replyInfo(`命令未迁移或未识别: ${trimmed}`);
+      }
     }
 
     return false;

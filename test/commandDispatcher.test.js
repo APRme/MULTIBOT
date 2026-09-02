@@ -456,3 +456,35 @@ test('CommandDispatcher returns false for unknown commands', async () => {
   assert.deepEqual(calls, []);
   assert.deepEqual(context.messages, [{ type: 'info', message: '命令未迁移或未识别: unknown command' }]);
 });
+
+test('CommandDispatcher silences unknown whisper commands by default', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher(calls);
+  const context = createContext({ source: 'whisper', sender: 'trusted_player' });
+
+  const handled = await dispatcher.dispatch('随便聊聊', context);
+
+  assert.equal(handled, false);
+  assert.deepEqual(context.messages, []);
+});
+
+test('CommandDispatcher replies configured text for unknown whisper commands', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher(calls, {
+    runtime: {
+      config: {
+        legacyConfig: {
+          chat: {
+            unknownWhisperReply: '私聊仅支持命令，输入 help 查看'
+          }
+        }
+      }
+    }
+  });
+  const context = createContext({ source: 'whisper', sender: 'trusted_player' });
+
+  const handled = await dispatcher.dispatch('随便聊聊', context);
+
+  assert.equal(handled, false);
+  assert.deepEqual(context.messages, [{ type: 'info', message: '私聊仅支持命令，输入 help 查看' }]);
+});

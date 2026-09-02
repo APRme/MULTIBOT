@@ -200,6 +200,10 @@ function getDefaultLegacyConfig() {
     display: {
       consoleUseAnsi: false
     },
+    chat: {
+      // whisper 收到非命令内容时的回复：空字符串=不回复（静默），非空=回复该文本
+      unknownWhisperReply: ''
+    },
     fish: false,
     ScriptScheduler: getDefaultScriptSchedulerConfig(),
     attack: {
@@ -346,6 +350,13 @@ function normalizeLegacyConfig(rawConfig, defaultConfig = getDefaultLegacyConfig
     display: {
       ...defaultConfig.display,
       ...(isPlainObject(rawConfig.display) ? rawConfig.display : {})
+    },
+    chat: {
+      ...defaultConfig.chat,
+      ...(isPlainObject(rawConfig.chat) ? rawConfig.chat : {}),
+      unknownWhisperReply: typeof rawConfig.chat?.unknownWhisperReply === 'string'
+        ? rawConfig.chat.unknownWhisperReply
+        : defaultConfig.chat.unknownWhisperReply
     },
     fish: rawConfig.fish !== undefined ? rawConfig.fish === true : defaultConfig.fish,
     ScriptScheduler: normalizeScriptSchedulerConfig(rawConfig.ScriptScheduler),

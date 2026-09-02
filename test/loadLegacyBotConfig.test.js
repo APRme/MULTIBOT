@@ -145,3 +145,36 @@ test('loadLegacyBotConfig keeps instance trustedPlayers override when merge is d
   assert.equal(config.trustedPlayersMergeParent, false);
   assert.deepEqual(config.trustedPlayers, ['ChildB', 'SharedUser']);
 });
+
+test('loadLegacyBotConfig defaults chat.unknownWhisperReply to empty string', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-legacy-config-chat-'));
+  const configPath = path.join(tempRoot, 'config.json');
+
+  fs.writeFileSync(configPath, JSON.stringify({}), 'utf8');
+
+  const config = loadLegacyBotConfig(configPath);
+
+  assert.equal(config.chat.unknownWhisperReply, '');
+});
+
+test('loadLegacyBotConfig keeps chat.unknownWhisperReply custom text and rejects non-strings', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-legacy-config-chat2-'));
+  const configPath = path.join(tempRoot, 'config.json');
+
+  fs.writeFileSync(configPath, JSON.stringify({
+    chat: {
+      unknownWhisperReply: '私聊仅支持命令，输入 help 查看'
+    }
+  }), 'utf8');
+
+  const config = loadLegacyBotConfig(configPath);
+  assert.equal(config.chat.unknownWhisperReply, '私聊仅支持命令，输入 help 查看');
+
+  fs.writeFileSync(configPath, JSON.stringify({
+    chat: {
+      unknownWhisperReply: false
+    }
+  }), 'utf8');
+  const config2 = loadLegacyBotConfig(configPath);
+  assert.equal(config2.chat.unknownWhisperReply, '');
+});
