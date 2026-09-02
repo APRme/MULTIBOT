@@ -179,7 +179,8 @@ class CommandDispatcher {
     }
 
     if (command === 'getping' && rawParts.length === 1) {
-      context.replyInfo(this.runtime.getPingText());
+      const result = await this.runtime.measurePing();
+      context.replyInfo(result.text);
       return true;
     }
 

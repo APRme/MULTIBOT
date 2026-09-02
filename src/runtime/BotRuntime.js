@@ -388,6 +388,7 @@ class BotRuntime {
     this.latencyMs = null;
     this.pendingPingId = null;
     this.pingTimer = null;
+    this.pingResolve = null;
     this.diagnostics = {
       connectionCount: 0,
       currentConnectionStartedAt: null,
@@ -584,10 +585,20 @@ class BotRuntime {
     if (id === this.pendingPingId) {
       this.latencyMs = Date.now() - this.pendingPingId;
       this.pendingPingId = null;
+      if (typeof this.pingResolve === 'function') {
+        const resolve = this.pingResolve;
+        this.pingResolve = null;
+        resolve(this.latencyMs);
+      }
     }
   }
 
   clearPingTimer() {
+    if (this.pingResolve) {
+      const resolve = this.pingResolve;
+      this.pingResolve = null;
+      resolve(null);
+    }
     if (this.pingTimer) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;
@@ -1307,20 +1318,6 @@ class BotRuntime {
       this.addRuntimeListener(bot._client, 'ping_response', (packet) => {
         this.handlePingResponse(packet);
       });
-      this.pingTimer = setInterval(() => {
-        if (!this.bot || !this.bot._client || this.bot._client.state !== 'play') {
-          return;
-        }
-        this.pendingPingId = Date.now();
-        try {
-          this.bot._client.write('ping_request', { id: BigInt(this.pendingPingId) });
-        } catch (error) {
-          this.pendingPingId = null;
-        }
-      }, 2000);
-      if (this.pingTimer && typeof this.pingTimer.unref === 'function') {
-        this.pingTimer.unref();
-      }
 
       if (bot._client.deserializer) {
         this.addRuntimeListener(bot._client.deserializer, 'malformed_packet_ignored', (info) => {
@@ -2040,6 +2037,53 @@ class BotRuntime {
     const me = this.bot.player || (this.bot.players && this.bot.players[this.bot.username]);
     const ping = me && Number.isFinite(me.ping) ? me.ping : null;
     return ping === null ? '暂无延迟数据' : `Ping: ${ping}ms`;
+  }
+
+  async measurePing(timeoutMs = 3000) {
+    const notConnected = '机器人尚未连接';
+
+    if (!this.bot || !this.bot._client) {
+      return { ok: false, text: notConnected };
+    }
+    if (this.bot._client.state !== 'play') {
+      return { ok: false, text: notConnected };
+    }
+
+    const id = Date.now();
+    this.pendingPingId = id;
+
+    const measured = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), Math.max(200, Number(timeoutMs) || 3000));
+      this.pingResolve = (ms) => {
+        clearTimeout(timer);
+        resolve(ms);
+      };
+      try {
+        this.bot._client.write('ping_request', { id: BigInt(id) });
+      } catch (error) {
+        clearTimeout(timer);
+        resolve(null);
+      }
+    });
+
+    if (this.pingResolve) {
+      this.pingResolve = null;
+    }
+
+    if (measured !== null) {
+      this.latencyMs = measured;
+      return { ok: true, text: `Ping: ${measured}ms` };
+    }
+
+    if (this.pendingPingId === id) {
+      this.pendingPingId = null;
+    }
+
+    if (Number.isFinite(this.latencyMs)) {
+      return { ok: true, text: `Ping: ${this.latencyMs}ms（缓存）` };
+    }
+
+    return { ok: true, text: '暂无延迟数据' };
   }
 
   getEntityListText() {

@@ -1225,6 +1225,58 @@ test('BotRuntime ignores stale ping_response', () => {
   assert.equal(runtime.pendingPingId, 12345);
 });
 
+test('BotRuntime measurePing sends one ping_request and resolves on pong', async () => {
+  const runtime = createRuntime();
+  const writes = [];
+  runtime.bot = {
+    _client: {
+      state: 'play',
+      write(name, payload) {
+        writes.push({ name, payload });
+      }
+    }
+  };
+  const promise = runtime.measurePing();
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].name, 'ping_request');
+  const sentId = Number(writes[0].payload.id);
+  assert.ok(Number.isInteger(sentId) && sentId > 0);
+
+  setTimeout(() => runtime.handlePingResponse({ id: sentId }), 5);
+  const result = await promise;
+  assert.equal(result.ok, true);
+  assert.match(result.text, /^Ping: \d+ms$/);
+  assert.equal(runtime.pendingPingId, null);
+});
+
+test('BotRuntime measurePing reports not connected without a bot or outside play', async () => {
+  const runtime = createRuntime();
+  runtime.bot = null;
+  let result = await runtime.measurePing();
+  assert.equal(result.ok, false);
+  assert.equal(result.text, '机器人尚未连接');
+
+  runtime.bot = { _client: { state: 'login' } };
+  result = await runtime.measurePing();
+  assert.equal(result.ok, false);
+  assert.equal(result.text, '机器人尚未连接');
+});
+
+test('BotRuntime measurePing falls back to cached latency on timeout', async () => {
+  const runtime = createRuntime();
+  runtime.bot = {
+    _client: {
+      state: 'play',
+      write() {}
+    }
+  };
+  runtime.latencyMs = 88;
+  const result = await runtime.measurePing(200);
+  assert.equal(result.ok, true);
+  assert.equal(result.text, 'Ping: 88ms（缓存）');
+  assert.equal(runtime.pendingPingId, null);
+});
+
 test('BotRuntime applyPhysicsStandby is a no-op when standby disabled', () => {
   const runtime = createRuntime();
   runtime.bot = { physicsEnabled: true };

@@ -219,8 +219,8 @@ test('CommandDispatcher getping reports latency from runtime', async () => {
   const calls = [];
   const dispatcher = createDispatcher(calls, {
     runtime: {
-      getPingText() {
-        return 'Ping: 42ms';
+      async measurePing() {
+        return { ok: true, text: 'Ping: 42ms' };
       }
     }
   });
