@@ -78,6 +78,7 @@ test('loadMasterConfig resolves MULTIBOT sessions dir', () => {
     logParseErrors: true
   });
   assert.deepEqual(masterConfig.diagnostics, {
+    cpuProfileOnExit: false,
     memoryLogger: {
       enabled: false,
       intervalMs: 10000,
@@ -109,6 +110,36 @@ test('loadMasterConfig resolves MULTIBOT sessions dir', () => {
   assert.deepEqual(masterConfig.consoleConnector, {
     historyLimit: 300
   });
+});
+
+test('loadMasterConfig validates diagnostics.cpuProfileOnExit', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-cpu-profile-config-'));
+  const appRoot = path.join(repoRoot, 'tests', 'MULTIBOT');
+  const configPath = path.join(appRoot, 'multibot.config.json');
+  fs.mkdirSync(appRoot, { recursive: true });
+
+  for (const value of [true, false]) {
+    fs.writeFileSync(configPath, JSON.stringify({
+      api: { token: 'test-token' },
+      diagnostics: { cpuProfileOnExit: value },
+      discovery: { enabled: false },
+      bots: []
+    }), 'utf8');
+    assert.equal(loadMasterConfig({ configPath, repoRoot, appRoot }).diagnostics.cpuProfileOnExit, value);
+  }
+
+  for (const value of ['true', 1, [], {}, null]) {
+    fs.writeFileSync(configPath, JSON.stringify({
+      api: { token: 'test-token' },
+      diagnostics: { cpuProfileOnExit: value },
+      discovery: { enabled: false },
+      bots: []
+    }), 'utf8');
+    assert.throws(
+      () => loadMasterConfig({ configPath, repoRoot, appRoot }),
+      /diagnostics\.cpuProfileOnExit must be a boolean/
+    );
+  }
 });
 
 test('normalizeAllowedOrigins validates and deduplicates exact HTTP origins', () => {
@@ -555,6 +586,7 @@ test('loadMasterConfig normalizes temporary memory logger settings', () => {
   });
 
   assert.deepEqual(masterConfig.diagnostics, {
+    cpuProfileOnExit: false,
     memoryLogger: {
       enabled: true,
       intervalMs: 15000,

@@ -77,6 +77,7 @@
 
 - `protocolGuard.logParseErrors`
 - `diagnostics.memoryLogger`
+- `diagnostics.cpuProfileOnExit`
 - `diagnostics.memoryDetails`
 - `diagnostics.apiAccessLogger`
 - `aggregateLogging`
@@ -240,7 +241,7 @@
 
 当目标服务端强制要求 Minecraft `26.1.2`，而当前 Mineflayer 仍使用 `1.21.11` 客户端协议时，可以让所有同服 bot 连接本机 ViaProxy，再由 ViaProxy 将协议转换到目标服：
 
-升级后启动首行应显示 `MULTIBOT V26.4.6-OpenAuth`，可用它确认运行的不是旧进程或旧 Git 版本。
+升级后启动首行应显示 `MULTIBOT V26.4.7-OpenAuth`，可用它确认运行的不是旧进程或旧 Git 版本。
 
 ```text
 MULTIBOT (1.21.11) -> 127.0.0.1:25568 -> ViaProxy (target-version 26.1.2) -> 目标服务器
@@ -489,6 +490,7 @@ cd MULTIBOT
 - 协议解析噪声日志：`protocolGuard.logParseErrors`
 - 微软底层认证缓存目录：`MULTIBOT/auth-cache`
 - 临时内存采样日志：`diagnostics.memoryLogger.filePath`
+- 控制台 `exit` 的 CPU 性能分析：`diagnostics.cpuProfileOnExit`（默认关闭）
 - 每 bot 详细内存诊断开关：`diagnostics.memoryDetails.enabled`
 - API 访问日志：`diagnostics.apiAccessLogger.filePath`
 - 服务端聚合日志：`aggregateLogging`

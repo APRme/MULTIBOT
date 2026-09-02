@@ -13,7 +13,7 @@ const { AggregateLogService } = require('../logging/AggregateLogService');
 const { ApiAccessLogService } = require('../logging/ApiAccessLogService');
 const { InstanceLifecycleLogService, LIFECYCLE_EVENTS } = require('../logging/InstanceLifecycleLogService');
 
-const MULTIBOT_VERSION = 'V26.4.6-OpenAuth';
+const MULTIBOT_VERSION = 'V26.4.7-OpenAuth';
 
 class MultibotApp {
   constructor(options = {}) {

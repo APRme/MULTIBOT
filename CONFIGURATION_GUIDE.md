@@ -166,6 +166,18 @@ legacy 显式 bot 没有 `default.config.json` 时，就只剩：
 
 ### 2.3 `diagnostics`
 
+#### `diagnostics.cpuProfileOnExit`
+
+| 字段 | 类型 | 代码默认 | 说明 |
+| --- | --- | --- | --- |
+| `diagnostics.cpuProfileOnExit` | boolean | `false` | 是否在控制台输入 `exit` 时保留 CPU profile 写入等待；启动脚本仅在开启时传递 Node CPU profiling 参数 |
+
+说明：
+
+- `false` 时输入 `exit` 会在正常停止后立即退出，不生成 `.cpuprofile`。
+- `true` 时必须使用 `start-multibot.ps1` 启动，脚本会启用 `--cpu-prof` 并将 profile 写入 `profiles/cpu`。
+- 直接执行 `node index.js` 不会根据配置自动添加 Node profiling 参数。
+
 #### `diagnostics.memoryLogger`
 
 | 字段 | 类型 | 代码默认 | 说明 |
@@ -542,7 +554,7 @@ client timed out after 30000 milliseconds
 
 当目标服务器强制使用 `26.1.2`，而当前 Mineflayer 客户端协议为 `1.21.11` 时，可用 ViaProxy 做协议转换，并由 MULTIBOT 的 OpenAuth 客户端使用各 bot 自己的 Microsoft 会话完成目标服认证：
 
-升级后启动首行应为 `MULTIBOT V26.4.6-OpenAuth`；如果仍显示旧版本号，应先检查当前 Git 提交和实际启动目录。
+升级后启动首行应为 `MULTIBOT V26.4.7-OpenAuth`；如果仍显示旧版本号，应先检查当前 Git 提交和实际启动目录。
 
 ```text
 MULTIBOT (1.21.11) -> ViaProxy 127.0.0.1:25568 -> 目标服 26.1.2

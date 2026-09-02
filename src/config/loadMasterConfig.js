@@ -295,6 +295,9 @@ function normalizeProtocolGuardConfig(rawConfig) {
 
 function normalizeDiagnosticsConfig(rawConfig) {
   const source = isPlainObject(rawConfig) ? rawConfig : {};
+  if (source.cpuProfileOnExit !== undefined && typeof source.cpuProfileOnExit !== 'boolean') {
+    throw new Error('diagnostics.cpuProfileOnExit must be a boolean');
+  }
   const memoryLoggerSource = isPlainObject(source.memoryLogger) ? source.memoryLogger : {};
   const memoryDetailsSource = isPlainObject(source.memoryDetails) ? source.memoryDetails : {};
   const apiAccessLoggerSource = isPlainObject(source.apiAccessLogger) ? source.apiAccessLogger : {};
@@ -310,6 +313,7 @@ function normalizeDiagnosticsConfig(rawConfig) {
     : './logs/lifecycle.log';
 
   return {
+    cpuProfileOnExit: source.cpuProfileOnExit === true,
     memoryLogger: {
       enabled: memoryLoggerSource.enabled === true,
       intervalMs: normalizePositiveInteger(memoryLoggerSource.intervalMs, 10000),

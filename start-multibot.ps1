@@ -45,8 +45,31 @@ if (-not $nodeCommand) {
 Write-Host "[MULTIBOT] Starting..."
 Write-Host "[MULTIBOT] Config: $resolvedConfigPath"
 
+$cpuProfileOnExit = $false
+try {
+  $configObject = Get-Content -LiteralPath $resolvedConfigPath -Raw | ConvertFrom-Json
+  $cpuProfileOnExit = $configObject.diagnostics.cpuProfileOnExit -eq $true
+} catch {
+  Write-Warning "[MULTIBOT] Failed to inspect diagnostics.cpuProfileOnExit; Node config validation will report the error."
+}
+
+$nodeArguments = @($indexPath, $resolvedConfigPath)
+if ($cpuProfileOnExit) {
+  $profileDirectory = Join-Path $PSScriptRoot "profiles\cpu"
+  New-Item -ItemType Directory -Path $profileDirectory -Force | Out-Null
+  $profileName = "MULTIBOT-{0}.cpuprofile" -f (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
+  $nodeArguments = @(
+    "--cpu-prof",
+    "--cpu-prof-dir=$profileDirectory",
+    "--cpu-prof-name=$profileName",
+    $indexPath,
+    $resolvedConfigPath
+  )
+  Write-Host "[MULTIBOT] CPU profile enabled: $(Join-Path $profileDirectory $profileName)"
+}
+
 while ($true) {
-  & $nodeCommand.Source $indexPath $resolvedConfigPath
+  & $nodeCommand.Source @nodeArguments
   $exitCode = $LASTEXITCODE
 
   if ($exitCode -eq 0) {

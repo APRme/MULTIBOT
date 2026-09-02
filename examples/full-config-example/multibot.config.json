@@ -12,6 +12,7 @@
     "logParseErrors": false
   },
   "diagnostics": {
+    "cpuProfileOnExit": false,
     "memoryLogger": {
       "enabled": true,
       "intervalMs": 10000,

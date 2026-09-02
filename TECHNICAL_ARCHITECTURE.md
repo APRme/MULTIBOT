@@ -268,7 +268,7 @@ MULTIBOT/
 负责：
 
 - 读取主配置
-- 归一化 API / diagnostics / aggregateLogging
+- 归一化 API / diagnostics（含 `cpuProfileOnExit`）/ aggregateLogging
 - 解析显式 bots
 - 自动发现 `BOTS/` 下的实例目录
 - 构造最终 `masterConfig.bots`
