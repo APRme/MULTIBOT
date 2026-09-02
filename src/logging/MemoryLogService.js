@@ -101,6 +101,12 @@ class MemoryLogService {
             clientEnded: diagnostic.client ? diagnostic.client.ended : null,
             clientState: diagnostic.client ? diagnostic.client.state : null,
             socketDestroyed: diagnostic.client ? diagnostic.client.socketDestroyed : null,
+            bytesRead: diagnostic.client && Number.isFinite(diagnostic.client.bytesRead)
+              ? diagnostic.client.bytesRead
+              : null,
+            bytesWritten: diagnostic.client && Number.isFinite(diagnostic.client.bytesWritten)
+              ? diagnostic.client.bytesWritten
+              : null,
             chunkPackets: diagnostic.chunkPackets
           });
           if (Array.isArray(diagnostic.endedBotRefs)) {

@@ -39,7 +39,9 @@ test('MemoryLogService writes JSONL samples with bot state summary', () => {
             client: {
               ended: false,
               state: 'play',
-              socketDestroyed: false
+              socketDestroyed: false,
+              bytesRead: 111,
+              bytesWritten: 222
             },
             chunkPackets: {
               total: {
@@ -134,8 +136,11 @@ test('MemoryLogService writes JSONL samples with bot state summary', () => {
   assert.equal(parsed.botMemory[0].id, 'alpha');
   assert.equal(parsed.botMemory[0].worldColumns, 42);
   assert.equal(parsed.botMemory[0].chunkPackets.total.mapChunk, 50);
+  assert.equal(parsed.botMemory[0].bytesRead, 111);
+  assert.equal(parsed.botMemory[0].bytesWritten, 222);
   assert.equal(parsed.botMemory[1].id, 'beta');
   assert.equal(parsed.botMemory[1].hasBot, false);
+  assert.equal(parsed.botMemory[1].bytesRead, null);
   assert.equal(parsed.endedBotRefs.length, 1);
   assert.equal(parsed.endedBotRefs[0].id, 'alpha');
   assert.equal(parsed.endedBotRefs[0].alive.columns, true);
