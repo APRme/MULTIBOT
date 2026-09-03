@@ -241,7 +241,7 @@
 
 当目标服务端强制要求 Minecraft `26.1.2`，而当前 Mineflayer 仍使用 `1.21.11` 客户端协议时，可以让所有同服 bot 连接本机 ViaProxy，再由 ViaProxy 将协议转换到目标服：
 
-升级后启动首行应显示 `MULTIBOT V26.4.7-OpenAuth`，可用它确认运行的不是旧进程或旧 Git 版本。
+升级后请重启进程以加载新代码，启动首行会打印 `MULTIBOT <版本号>`，可用它确认运行的不是旧进程或旧 Git 版本（版本号以启动输出为准）。
 
 ```text
 MULTIBOT (1.21.11) -> 127.0.0.1:25568 -> ViaProxy (target-version 26.1.2) -> 目标服务器
