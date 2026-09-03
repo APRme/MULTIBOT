@@ -389,6 +389,7 @@ class BotRuntime {
     this.pendingPingId = null;
     this.pingTimer = null;
     this.pingResolve = null;
+    this.lastKnownPosition = null;
     this.diagnostics = {
       connectionCount: 0,
       currentConnectionStartedAt: null,
@@ -1365,6 +1366,19 @@ class BotRuntime {
         this.handlePingResponse(packet);
       });
 
+      // 轻量模式（无实体插件）下通过协议层位置同步包记录坐标，供 getpos 使用
+      if (this.isLightweightMode()) {
+        this.addRuntimeListener(bot._client, 'position', (packet) => {
+          if (packet && Number.isFinite(packet.x)) {
+            this.lastKnownPosition = {
+              x: packet.x,
+              y: packet.y,
+              z: packet.z
+            };
+          }
+        });
+      }
+
       if (bot._client.deserializer) {
         this.addRuntimeListener(bot._client.deserializer, 'malformed_packet_ignored', (info) => {
           if (this.protocolGuardConfig.logParseErrors !== false) {
@@ -2064,7 +2078,15 @@ class BotRuntime {
       return '机器人尚未连接';
     }
     if (!this.bot.entity) {
-      return this.isLightweightMode() ? '实体处理已禁用，无法读取位置' : '机器人尚未生成';
+      if (this.isLightweightMode()) {
+        // 轻量模式无实体：使用协议层位置同步包记录的坐标
+        if (this.lastKnownPosition) {
+          const p = this.lastKnownPosition;
+          return `位置: ${p.x.toFixed(2)} ${p.y.toFixed(2)} ${p.z.toFixed(2)}`;
+        }
+        return '实体处理已禁用，位置数据暂不可用';
+      }
+      return '机器人尚未生成';
     }
 
     const pos = this.bot.entity.position;
