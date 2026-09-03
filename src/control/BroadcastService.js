@@ -27,10 +27,15 @@ class BroadcastService {
   }
 
   // 广播按服务器隔离: 只投递给与发起 bot 同一 serverDir 的 bot。
-  // 发起者未知(无 bot 上下文)时返回 null 表示不限制服务器。
+  // 发起者(源 bot)必须在 runtimes 中注册; 找不到源 bot 时广播应 fail-closed,
+  // 绝不回退成"发给所有服务器"(避免跨服务器误发)。
   getServerDirOfBot(botId) {
     const runtime = botId ? this.runtimes.get(botId) : null;
     return runtime && runtime.config ? (runtime.config.serverDir || null) : null;
+  }
+
+  hasSourceBot(botId) {
+    return Boolean(botId) && this.runtimes.has(botId);
   }
 
   isSameServer(runtime, serverDir) {
@@ -124,6 +129,15 @@ class BroadcastService {
 
   broadcastSend(message, sourceBotId = null) {
     const deliveredBotIds = [];
+
+    // 无有效源 bot(未注册/缺 id)时 fail-closed, 不广播
+    if (!this.hasSourceBot(sourceBotId)) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn(`[BROADCAST] send ignored: unknown source bot id=${sourceBotId || 'null'}`);
+      }
+      return deliveredBotIds;
+    }
+
     const serverDir = this.getServerDirOfBot(sourceBotId);
 
     for (const [botId, runtime] of this.runtimes.entries()) {
@@ -175,6 +189,14 @@ class BroadcastService {
       failed: [],
       skippedBotIds: []
     };
+
+    // 无有效源 bot(未注册/缺 id)时 fail-closed, 不向任何 bot 执行
+    if (!this.hasSourceBot(sourceBotId)) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn(`[BROADCAST] command ignored: unknown source bot id=${sourceBotId || 'null'} command=${normalizedCommand}`);
+      }
+      return result;
+    }
 
     for (const [botId, runtime] of this.runtimes.entries()) {
       if (!runtime || runtime.state !== 'online' || !runtime.bot) {

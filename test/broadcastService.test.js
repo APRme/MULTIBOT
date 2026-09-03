@@ -275,3 +275,45 @@ test('BroadcastService collectLockStatuses filters by serverDir', () => {
   const all = service.collectLockStatuses(null);
   assert.deepEqual(all.map((e) => e.botId).sort(), ['alpha', 'beta', 'delta', 'gamma']);
 });
+
+test('BroadcastService broadcastSend fails closed without a valid source bot', () => {
+  const service = new BroadcastService();
+  const sent = [];
+  const makeRuntime = (id, serverDir) => {
+    return {
+      config: { id, serverDir, username: id },
+      state: 'online',
+      bot: {},
+      sendChat(message) {
+        sent.push([id, message]);
+      }
+    };
+  };
+  service.registerRuntime(makeRuntime('alpha', 'server-a'));
+  service.registerRuntime(makeRuntime('gamma', 'server-b'));
+
+  // null 源与未注册源均不广播(绝不跨服务器)
+  assert.deepEqual(service.broadcastSend('hi', null), []);
+  assert.deepEqual(service.broadcastSend('hi', 'ghost-bot'), []);
+  assert.deepEqual(sent, []);
+});
+
+test('BroadcastService broadcastCommand fails closed without a valid source bot', async () => {
+  const service = new BroadcastService();
+  const executed = [];
+  service.registerRuntime({
+    config: { id: 'alpha', serverDir: 'server-a', username: 'alpha' },
+    state: 'online',
+    bot: {},
+    async executeCommand(command) {
+      executed.push(['alpha', command]);
+      return true;
+    }
+  });
+
+  const result = await service.broadcastCommand('inv info', { sourceBotId: 'ghost-bot' });
+  assert.deepEqual(result.successBotIds, []);
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(result.skippedBotIds, []);
+  assert.deepEqual(executed, []);
+});
