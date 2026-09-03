@@ -757,10 +757,11 @@ class BotRuntime {
     };
 
     if (this.isLightweightMode()) {
-      // 只加载 chat/game/health 插件：不处理区块/实体/物理（MCC 式轻量挂机）
-      // health 插件仅依赖 update_health 协议包，用于读取血量/饱食度
+      // 只加载 chat/game/health/settings 插件：不处理区块/实体/物理（MCC 式轻量挂机）
+      // health: 仅依赖 update_health 协议包（血量/饱食度）；settings: 登录时发送 client_information，
+      // 部分服务器在 configuration 阶段等待该包才允许进入 play
       options.loadInternalPlugins = false;
-      options.plugins = { chat: true, game: true, health: true };
+      options.plugins = { chat: true, game: true, health: true, settings: true };
     }
 
     if (this.isOpenAuthEnabled()) {

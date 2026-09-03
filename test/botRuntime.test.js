@@ -1351,7 +1351,7 @@ test('BotRuntime createMineflayerOptions whitelists plugins in lightweight mode'
   });
   const options = runtime.createMineflayerOptions(null, null);
   assert.equal(options.loadInternalPlugins, false);
-  assert.deepEqual(options.plugins, { chat: true, game: true, health: true });
+  assert.deepEqual(options.plugins, { chat: true, game: true, health: true, settings: true });
 });
 
 test('BotRuntime createMineflayerOptions keeps full plugins in normal mode', () => {
