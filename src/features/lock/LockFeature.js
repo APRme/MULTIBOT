@@ -6,6 +6,7 @@ class LockFeature {
   constructor(options = {}) {
     this.logger = options.logger;
     this.lockHistoryPath = options.lockHistoryPath || path.join(process.cwd(), 'lock_history.txt');
+    this.onExpire = typeof options.onExpire === 'function' ? options.onExpire : null;
     this.activeTeleportLock = null;
     this.activeTeleportLockTimer = null;
   }
@@ -83,6 +84,17 @@ class LockFeature {
 
     if (this.logger) {
       this.logger.info(`[LOCK] expired owner=${lock.owner} reason=${lock.reason} mode=${reason}`);
+    }
+
+    // 自然到期(计时器/重启恢复发现已过期)后通知宿主执行预设动作(如 /home)；手动 unlock 不触发
+    if (this.onExpire) {
+      try {
+        this.onExpire(lock, reason);
+      } catch (error) {
+        if (this.logger) {
+          this.logger.error(`[LOCK] onExpire callback failed: ${error.message}`);
+        }
+      }
     }
 
     return true;
@@ -256,7 +268,7 @@ class LockFeature {
     const normalized = String(trimmed || '').trim().toLowerCase();
     const command = (parts[0] || '').toLowerCase();
 
-    if (['health', 'recordstatus', 'getpos', 'stop', 'stopscript', 'unlock'].includes(command)) {
+    if (['health', 'recordstatus', 'getpos', 'stop', 'stopscript', 'unlock', 'lockstatus'].includes(command)) {
       return true;
     }
 

@@ -19,6 +19,39 @@ function createContext(overrides = {}) {
   };
 }
 
+test('CommandDispatcher lockstatus replies per-bot lock summary', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher(calls, {
+    lockStatuses: [
+      { botId: 'alpha', username: 'Alpha', state: 'online', lock: { locked: false } },
+      {
+        botId: 'beta',
+        username: 'Beta',
+        state: 'online',
+        lock: { locked: true, owner: 'owner1', reason: '挂机', remainingText: '30m' }
+      }
+    ]
+  });
+  const context = createContext({ source: 'whisper', sender: 'manager' });
+
+  await dispatcher.dispatch('lockstatus', context);
+
+  assert.equal(context.messages.length, 2);
+  assert.equal(context.messages[0].message, 'Alpha: 未锁定');
+  assert.equal(context.messages[1].message, 'Beta: 已锁定 owner=owner1 原因=挂机 剩余=30m');
+});
+
+test('CommandDispatcher lockstatus reports no online bots when list is empty', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher(calls);
+  const context = createContext({ source: 'whisper', sender: 'manager' });
+
+  await dispatcher.dispatch('lockstatus', context);
+
+  assert.equal(context.messages.length, 1);
+  assert.match(context.messages[0].message, /当前没有在线 bot/);
+});
+
 function createDispatcher(calls, overrides = {}) {
   const capabilities = overrides.capabilities || {
     entityHandling: true,
@@ -29,6 +62,9 @@ function createDispatcher(calls, overrides = {}) {
   const runtime = {
     getCapabilities() {
       return capabilities;
+    },
+    getGlobalLockStatus() {
+      return overrides.lockStatuses || [];
     },
     getHealthText() {
       return 'ok';

@@ -191,7 +191,9 @@ function getDefaultLegacyConfig() {
       enableSpawnActions: false,
       whitelistReloadMinutes: 30,
       enableResourcePack: false,
-      physicsStandby: false
+      physicsStandby: false,
+      // 锁自然到期后自动执行的命令(游戏内命令需带 /)；空字符串=禁用
+      lockAfterExpireCommand: '/home'
     },
     capabilities: {
       entityHandling: true,
@@ -334,7 +336,10 @@ function normalizeLegacyConfig(rawConfig, defaultConfig = getDefaultLegacyConfig
     },
     behavior: {
       ...defaultConfig.behavior,
-      ...(isPlainObject(rawConfig.behavior) ? rawConfig.behavior : {})
+      ...(isPlainObject(rawConfig.behavior) ? rawConfig.behavior : {}),
+      lockAfterExpireCommand: typeof rawConfig.behavior?.lockAfterExpireCommand === 'string'
+        ? rawConfig.behavior.lockAfterExpireCommand
+        : defaultConfig.behavior.lockAfterExpireCommand
     },
     capabilities: {
       ...defaultConfig.capabilities,

@@ -86,3 +86,70 @@ test('LockFeature allows lock owner to use broadcast inv commands', async () => 
   assert.equal(feature.isAllowedWhisperCommandDuringLock('broadcast inv dropall', ['broadcast', 'inv', 'dropall']), false);
   feature.stop();
 });
+
+test('LockFeature invokes onExpire on natural expiry but not on manual unlock', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-lock-expire-'));
+  const lockHistoryPath = path.join(tempDir, 'lock_history.txt');
+  const expired = [];
+  const feature = new LockFeature({
+    lockHistoryPath,
+    onExpire: (lock, reason) => expired.push({ owner: lock.owner, reason })
+  });
+
+  const ownerContext = createMockContext('whisper', 'example_player');
+  await feature.handleLockCommand(ownerContext, ['lock', '1m', '挂机']);
+
+  assert.equal(feature.expireActiveTeleportLock('timer_expire'), true);
+  assert.equal(expired.length, 1);
+  assert.equal(expired[0].owner, 'example_player');
+  assert.equal(expired[0].reason, 'timer_expire');
+
+  // 再次锁定后手动 unlock 不触发 onExpire
+  await feature.handleLockCommand(ownerContext, ['lock', '1m', '再锁']);
+  assert.equal(feature.unlockActiveTeleportLock('example_player', 'manual_unlock'), true);
+  assert.equal(expired.length, 1);
+  feature.stop();
+});
+
+test('LockFeature onExpire fires with startup_expire when restoring an already expired lock', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-lock-startup-expire-'));
+  const lockHistoryPath = path.join(tempDir, 'lock_history.txt');
+  const now = Date.now();
+
+  fs.writeFileSync(lockHistoryPath, `${JSON.stringify({
+    type: 'lock',
+    lockId: '1-example_player',
+    owner: 'example_player',
+    ownerLower: 'example_player',
+    reason: '挂机中',
+    createdAt: new Date(now - 120000).toISOString(),
+    expiresAt: new Date(now - 60000).toISOString(),
+    actor: 'example_player',
+    source: 'whisper',
+    version: 1
+  })}\n`, 'utf8');
+
+  const expired = [];
+  const feature = new LockFeature({
+    lockHistoryPath,
+    onExpire: (lock, reason) => expired.push({ owner: lock.owner, reason })
+  });
+  feature.start();
+
+  assert.equal(feature.getTeleportLockStatus().locked, false);
+  assert.equal(expired.length, 1);
+  assert.equal(expired[0].reason, 'startup_expire');
+  feature.stop();
+});
+
+test('LockFeature allows lockstatus during lock for non-owners', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-lock-lockstatus-'));
+  const lockHistoryPath = path.join(tempDir, 'lock_history.txt');
+  const feature = new LockFeature({ lockHistoryPath });
+
+  const ownerContext = createMockContext('whisper', 'example_player');
+  await feature.handleLockCommand(ownerContext, ['lock', '1m', '挂机']);
+
+  assert.equal(feature.isAllowedWhisperCommandDuringLock('lockstatus', ['lockstatus']), true);
+  feature.stop();
+});

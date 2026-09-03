@@ -182,3 +182,96 @@ test('BroadcastService broadcasts eat commands and aggregates failures from repl
     skippedBotIds: []
   });
 });
+
+test('BroadcastService broadcastSend is isolated per serverDir', () => {
+  const service = new BroadcastService();
+  const sent = {};
+
+  const makeRuntime = (id, serverDir) => {
+    sent[id] = [];
+    return {
+      config: { id, serverDir, username: id },
+      state: 'online',
+      bot: {},
+      sendChat(message) {
+        sent[id].push(message);
+      }
+    };
+  };
+
+  const alpha = makeRuntime('alpha', 'server-a');
+  const beta = makeRuntime('beta', 'server-a');
+  const gamma = makeRuntime('gamma', 'server-b');
+  [alpha, beta, gamma].forEach((r) => service.registerRuntime(r));
+
+  const delivered = service.broadcastSend('hi from a', 'alpha');
+
+  assert.deepEqual(delivered.sort(), ['alpha', 'beta']);
+  assert.equal(sent.gamma.length, 0, 'server-b bot must not receive cross-server message');
+  assert.equal(sent.alpha.length, 1);
+  assert.equal(sent.beta.length, 1);
+
+  const deliveredFromB = service.broadcastSend('hi from b', 'gamma');
+  assert.deepEqual(deliveredFromB, ['gamma']);
+});
+
+test('BroadcastService broadcastCommand is isolated per serverDir', async () => {
+  const service = new BroadcastService();
+  const executed = {};
+
+  const makeRuntime = (id, serverDir) => {
+    executed[id] = [];
+    return {
+      config: { id, serverDir, username: id },
+      state: 'online',
+      bot: {},
+      async executeCommand(command) {
+        executed[id].push(command);
+        return true;
+      }
+    };
+  };
+
+  const alpha = makeRuntime('alpha', 'server-a');
+  const beta = makeRuntime('beta', 'server-a');
+  const gamma = makeRuntime('gamma', 'server-b');
+  [alpha, beta, gamma].forEach((r) => service.registerRuntime(r));
+
+  const result = await service.broadcastCommand('inv info', { sourceBotId: 'alpha' });
+
+  assert.deepEqual(result.successBotIds.sort(), ['alpha', 'beta']);
+  assert.deepEqual(result.skippedBotIds, ['gamma']);
+  assert.deepEqual(executed.gamma, [], 'server-b bot must not run the command');
+});
+
+test('BroadcastService collectLockStatuses filters by serverDir', () => {
+  const service = new BroadcastService();
+
+  const makeRuntime = (id, serverDir, lock) => ({
+    config: { id, serverDir, username: id },
+    state: 'online',
+    bot: {},
+    lockFeature: {
+      getTeleportLockStatus() {
+        return lock;
+      }
+    }
+  });
+
+  service.registerRuntime(makeRuntime('alpha', 'server-a', {
+    locked: true, owner: 'owner1', reason: '挂机', remainingText: '30m'
+  }));
+  service.registerRuntime(makeRuntime('beta', 'server-a', { locked: false }));
+  service.registerRuntime(makeRuntime('gamma', 'server-b', { locked: false }));
+  service.registerRuntime(makeRuntime('delta', 'server-a', { locked: false }));
+  const stopped = makeRuntime('zeta', 'server-a', { locked: false });
+  stopped.state = 'stopped';
+  service.registerRuntime(stopped);
+
+  const onA = service.collectLockStatuses('server-a');
+  assert.deepEqual(onA.map((e) => e.botId).sort(), ['alpha', 'beta', 'delta']);
+  assert.equal(onA.find((e) => e.botId === 'alpha').lock.locked, true);
+
+  const all = service.collectLockStatuses(null);
+  assert.deepEqual(all.map((e) => e.botId).sort(), ['alpha', 'beta', 'delta', 'gamma']);
+});

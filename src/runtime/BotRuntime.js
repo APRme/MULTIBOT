@@ -405,8 +405,10 @@ class BotRuntime {
 
     this.lockFeature = new LockFeature({
       logger: this.logger,
-      lockHistoryPath: this.config.paths.lockHistoryPath
+      lockHistoryPath: this.config.paths.lockHistoryPath,
+      onExpire: (lock, reason) => this.handleLockExpired(lock, reason)
     });
+    this.pendingLockExpireCommand = null;
     this.lockFeature.start();
 
     this.trustedPlayersStore = new TrustedPlayersStore({
@@ -618,6 +620,50 @@ class BotRuntime {
     this.scriptFeature.onSpawn();
     this.scheduleLegacyAutoRestart();
     this.publishStatus();
+
+    // 锁在离线期间到期: 恢复在线后补执行一次预设命令(如 /home)
+    this.flushPendingLockExpireCommand();
+  }
+
+  // 锁自然到期(计时器/重启恢复发现已过期)后执行预设命令(behavior.lockAfterExpireCommand, 默认 /home);
+  // bot 在线直接 chat, 离线则挂起待重连后补执行一次; 手动 unlock 不触发。
+  handleLockExpired(lock, reason) {
+    const configured = this.config?.legacyConfig?.behavior?.lockAfterExpireCommand;
+    const command = typeof configured === 'string' ? configured.trim() : '';
+    if (!command) {
+      return;
+    }
+
+    if (this.state === 'online' && this.bot && typeof this.bot.chat === 'function') {
+      this.pendingLockExpireCommand = null;
+      try {
+        this.bot.chat(command);
+        this.logger.info(`[LOCK] after expire executed command=${command} owner=${lock.owner} reason=${reason}`);
+      } catch (error) {
+        this.logger.error(`[LOCK] after expire command failed: ${error.message}`);
+      }
+      return;
+    }
+
+    this.pendingLockExpireCommand = command;
+    this.logger.info(`[LOCK] after expire command pending (bot offline) command=${command}`);
+  }
+
+  flushPendingLockExpireCommand() {
+    if (!this.pendingLockExpireCommand) {
+      return;
+    }
+
+    const command = this.pendingLockExpireCommand;
+    this.pendingLockExpireCommand = null;
+    if (this.bot && typeof this.bot.chat === 'function') {
+      try {
+        this.bot.chat(command);
+        this.logger.info(`[LOCK] pending after-expire command executed command=${command}`);
+      } catch (error) {
+        this.logger.error(`[LOCK] pending after-expire command failed: ${error.message}`);
+      }
+    }
   }
 
   handlePingResponse(packet) {
@@ -2066,6 +2112,29 @@ class BotRuntime {
     return [this.config.id];
   }
 
+  // 同服务器在线 bot 锁状态摘要(whisper lockstatus 用): 有广播服务则聚合与自身同
+  // serverDir 的在线 bot, 否则仅返回自身。
+  getGlobalLockStatus() {
+    if (this.broadcastService && typeof this.broadcastService.collectLockStatuses === 'function') {
+      const collected = this.broadcastService.collectLockStatuses(this.config.serverDir || null);
+      if (collected.length > 0) {
+        return collected;
+      }
+    }
+
+    if (this.state !== 'online') {
+      return [];
+    }
+
+    return [{
+      botId: this.config.id,
+      username: this.config.username || this.config.id,
+      state: this.state,
+      serverDir: this.config.serverDir || null,
+      lock: this.lockFeature.getTeleportLockStatus()
+    }];
+  }
+
   async broadcastCommand(command, options = {}) {
     if (this.broadcastService && typeof this.broadcastService.broadcastCommand === 'function') {
       return this.broadcastService.broadcastCommand(command, {
@@ -2073,7 +2142,6 @@ class BotRuntime {
         sourceBotId: this.config.id
       });
     }
-
     const context = this.createCommandContext({
       source: 'broadcast',
       sender: options.sender || this.config.id

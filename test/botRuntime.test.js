@@ -1395,6 +1395,81 @@ test('BotRuntime attachLightInventoryCore mounts zero-entity inventory on lightw
   runtime.detachRuntimeListeners();
 });
 
+test('BotRuntime executes lock-after-expire command when online', () => {
+  const chats = [];
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: {
+        ...makeLegacyConfig({ entityHandling: false, terrainHandling: false }),
+        behavior: { lockAfterExpireCommand: '/home' }
+      }
+    }
+  });
+  runtime.state = 'online';
+  runtime.bot = {
+    chat(message) {
+      chats.push(message);
+    }
+  };
+
+  runtime.handleLockExpired({ owner: 'owner1' }, 'timer_expire');
+
+  assert.deepEqual(chats, ['/home']);
+  assert.equal(runtime.pendingLockExpireCommand, null);
+});
+
+test('BotRuntime queues lock-after-expire command offline and flushes on ready', () => {
+  const chats = [];
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: {
+        ...makeLegacyConfig({ entityHandling: false, terrainHandling: false }),
+        behavior: { lockAfterExpireCommand: '/home' }
+      }
+    }
+  });
+  runtime.state = 'stopped';
+  runtime.bot = null;
+
+  runtime.handleLockExpired({ owner: 'owner1' }, 'startup_expire');
+  assert.equal(runtime.pendingLockExpireCommand, '/home');
+  assert.deepEqual(chats, []);
+
+  runtime.state = 'online';
+  runtime.bot = {
+    chat(message) {
+      chats.push(message);
+    }
+  };
+  runtime.flushPendingLockExpireCommand();
+
+  assert.deepEqual(chats, ['/home']);
+  assert.equal(runtime.pendingLockExpireCommand, null);
+});
+
+test('BotRuntime skips lock-after-expire command when configured empty', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: {
+        ...makeLegacyConfig({ entityHandling: false, terrainHandling: false }),
+        behavior: { lockAfterExpireCommand: '' }
+      }
+    }
+  });
+  runtime.state = 'online';
+  const chats = [];
+  runtime.bot = {
+    chat(message) {
+      chats.push(message);
+    }
+  };
+
+  runtime.handleLockExpired({ owner: 'owner1' }, 'timer_expire');
+
+  assert.deepEqual(chats, []);
+  assert.equal(runtime.pendingLockExpireCommand, null);
+});
+
 test('BotRuntime attachChunkBatchReply replies minimum rate on chunk_batch_finished', () => {
   const runtime = createRuntime({
     config: {

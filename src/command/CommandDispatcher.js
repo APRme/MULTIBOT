@@ -130,6 +130,7 @@ class CommandDispatcher {
       '  abortrecord',
       withCapability('entity list', { entityHandling: true }),
       '  lock / unlock',
+      '  lockstatus（查看所有在线 bot 锁状态）',
       `当前能力: entityHandling=${capabilities.entityHandling ? 'on' : 'off'} terrainHandling=${capabilities.terrainHandling ? 'on' : 'off'} inventoryHandling=${capabilities.inventoryHandling ? 'on' : 'off'}`
     ];
   }
@@ -149,6 +150,27 @@ class CommandDispatcher {
     }
 
     if (await this.lockFeature.handleUnlockCommand(context, rawParts)) {
+      return true;
+    }
+
+    // 汇总所有在线 bot 的锁状态(whisper 任一 bot 即可查看, 找空闲 bot)
+    if (command === 'lockstatus' && rawParts.length === 1) {
+      const statuses = this.runtime.getGlobalLockStatus();
+      if (statuses.length === 0) {
+        context.replyInfo('当前没有在线 bot');
+        return true;
+      }
+
+      for (const entry of statuses) {
+        const label = entry.username || entry.botId;
+        if (entry.lock && entry.lock.locked) {
+          context.replyInfo(
+            `${label}: 已锁定 owner=${entry.lock.owner} 原因=${entry.lock.reason} 剩余=${entry.lock.remainingText}`
+          );
+        } else {
+          context.replyInfo(`${label}: 未锁定`);
+        }
+      }
       return true;
     }
 

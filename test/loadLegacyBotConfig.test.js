@@ -83,6 +83,31 @@ test('loadLegacyBotConfig lets instance config override inherited capability def
   });
 });
 
+test('loadLegacyBotConfig defaults lockAfterExpireCommand to /home and honors overrides', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-legacy-config-lock-expire-'));
+  const configPath = path.join(tempRoot, 'config.json');
+
+  fs.writeFileSync(configPath, JSON.stringify({}), 'utf8');
+  const defaults = loadLegacyBotConfig(configPath);
+  assert.equal(defaults.behavior.lockAfterExpireCommand, '/home');
+
+  fs.writeFileSync(configPath, JSON.stringify({
+    behavior: {
+      lockAfterExpireCommand: ''
+    }
+  }), 'utf8');
+  const disabled = loadLegacyBotConfig(configPath);
+  assert.equal(disabled.behavior.lockAfterExpireCommand, '');
+
+  fs.writeFileSync(configPath, JSON.stringify({
+    behavior: {
+      lockAfterExpireCommand: '/spawn'
+    }
+  }), 'utf8');
+  const custom = loadLegacyBotConfig(configPath);
+  assert.equal(custom.behavior.lockAfterExpireCommand, '/spawn');
+});
+
 test('loadLegacyBotConfig inherits and overrides trustedPlayersFile', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-legacy-config-trusted-file-'));
   const defaultConfigPath = path.join(tempRoot, 'default.config.json');

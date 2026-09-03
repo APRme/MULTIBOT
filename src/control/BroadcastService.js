@@ -26,6 +26,51 @@ class BroadcastService {
     this.runtimes.delete(botId);
   }
 
+  // 广播按服务器隔离: 只投递给与发起 bot 同一 serverDir 的 bot。
+  // 发起者未知(无 bot 上下文)时返回 null 表示不限制服务器。
+  getServerDirOfBot(botId) {
+    const runtime = botId ? this.runtimes.get(botId) : null;
+    return runtime && runtime.config ? (runtime.config.serverDir || null) : null;
+  }
+
+  isSameServer(runtime, serverDir) {
+    if (serverDir == null) {
+      return true;
+    }
+    return (runtime && runtime.config && (runtime.config.serverDir || null)) === serverDir;
+  }
+
+  // 收集所有在线 bot 的锁状态摘要(供 whisper lockstatus 聚合回复, 找空闲 bot)。
+  // serverDir 非空时只收集同一服务器的 bot。
+  collectLockStatuses(serverDir = null) {
+    const statuses = [];
+
+    for (const [botId, runtime] of this.runtimes.entries()) {
+      if (!runtime || runtime.state !== 'online' || !runtime.bot) {
+        continue;
+      }
+
+      if (!this.isSameServer(runtime, serverDir)) {
+        continue;
+      }
+
+      let lock = { locked: false, owner: null, reason: null };
+      if (runtime.lockFeature && typeof runtime.lockFeature.getTeleportLockStatus === 'function') {
+        lock = runtime.lockFeature.getTeleportLockStatus();
+      }
+
+      statuses.push({
+        botId,
+        username: (runtime.config && runtime.config.username) || botId,
+        state: runtime.state,
+        serverDir: runtime.config ? runtime.config.serverDir || null : null,
+        lock
+      });
+    }
+
+    return statuses;
+  }
+
   createInternalCommandContext(options = {}) {
     const sourceBotId = options.sourceBotId || 'unknown';
     const sender = options.sender || sourceBotId;
@@ -79,9 +124,15 @@ class BroadcastService {
 
   broadcastSend(message, sourceBotId = null) {
     const deliveredBotIds = [];
+    const serverDir = this.getServerDirOfBot(sourceBotId);
 
     for (const [botId, runtime] of this.runtimes.entries()) {
       if (!runtime || runtime.state !== 'online' || !runtime.bot) {
+        continue;
+      }
+
+      // 只投递给与发起 bot 同一服务器的 bot, 不跨服务器广播
+      if (!this.isSameServer(runtime, serverDir)) {
         continue;
       }
 
@@ -102,7 +153,7 @@ class BroadcastService {
 
     if (this.logger && typeof this.logger.info === 'function') {
       this.logger.info(
-        `[BROADCAST] source=${sourceBotId || 'unknown'} delivered=${deliveredBotIds.length} message=${message}`
+        `[BROADCAST] source=${sourceBotId || 'unknown'} server=${serverDir || 'any'} delivered=${deliveredBotIds.length} message=${message}`
       );
     }
 
@@ -115,6 +166,9 @@ class BroadcastService {
       throw new Error('broadcast command only supports inv ... or eat ...');
     }
 
+    const sourceBotId = options.sourceBotId || null;
+    const serverDir = this.getServerDirOfBot(sourceBotId);
+
     const result = {
       command: normalizedCommand,
       successBotIds: [],
@@ -124,6 +178,12 @@ class BroadcastService {
 
     for (const [botId, runtime] of this.runtimes.entries()) {
       if (!runtime || runtime.state !== 'online' || !runtime.bot) {
+        result.skippedBotIds.push(botId);
+        continue;
+      }
+
+      // 只投递给与发起 bot 同一服务器的 bot, 不跨服务器广播
+      if (!this.isSameServer(runtime, serverDir)) {
         result.skippedBotIds.push(botId);
         continue;
       }
@@ -155,7 +215,7 @@ class BroadcastService {
 
     if (this.logger && typeof this.logger.info === 'function') {
       this.logger.info(
-        `[BROADCAST] command source=${options.sourceBotId || 'unknown'} success=${result.successBotIds.length} failed=${result.failed.length} skipped=${result.skippedBotIds.length} command=${normalizedCommand}`
+        `[BROADCAST] command source=${options.sourceBotId || 'unknown'} server=${serverDir || 'any'} success=${result.successBotIds.length} failed=${result.failed.length} skipped=${result.skippedBotIds.length} command=${normalizedCommand}`
       );
     }
 
