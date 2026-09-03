@@ -19,7 +19,7 @@ function createContext(overrides = {}) {
   };
 }
 
-test('CommandDispatcher lockstatus replies per-bot lock summary', async () => {
+test('CommandDispatcher lockstatus replies a single combined message', async () => {
   const calls = [];
   const dispatcher = createDispatcher(calls, {
     lockStatuses: [
@@ -42,10 +42,11 @@ test('CommandDispatcher lockstatus replies per-bot lock summary', async () => {
 
   await dispatcher.dispatch('lockstatus', context);
 
-  assert.equal(context.messages.length, 3);
-  assert.equal(context.messages[0].message, 'Alpha: 未锁定');
-  assert.equal(context.messages[1].message, 'Beta: 已锁定 owner=owner1 原因=挂机 剩余=30m 来源=面板');
-  assert.equal(context.messages[2].message, 'Gamma: 已锁定 owner=owner2 原因=任务 剩余=1h 来源=游戏内');
+  assert.equal(context.messages.length, 1, 'must be a single reply');
+  assert.equal(
+    context.messages[0].message,
+    '锁状态: Alpha=未锁定 | Beta=已锁定(owner1,30m,面板) | Gamma=已锁定(owner2,1h,游戏内)'
+  );
 });
 
 test('CommandDispatcher lockstatus reports no online bots when list is empty', async () => {

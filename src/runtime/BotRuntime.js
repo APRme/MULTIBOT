@@ -627,9 +627,18 @@ class BotRuntime {
 
   // 锁自然到期(计时器/重启恢复发现已过期)后执行预设命令(behavior.lockAfterExpireCommand, 默认 /home);
   // bot 在线直接 chat, 离线则挂起待重连后补执行一次; 手动 unlock 不触发。
+  // lock 对象可带 autoExecAfterExpire 覆盖: false=本次锁到期不执行, true=执行(全局配置为空时回退 /home)。
   handleLockExpired(lock, reason) {
+    if (lock && lock.autoExecAfterExpire === false) {
+      this.logger.info('[LOCK] after expire skipped (lock autoExecAfterExpire=false)');
+      return;
+    }
+
     const configured = this.config?.legacyConfig?.behavior?.lockAfterExpireCommand;
-    const command = typeof configured === 'string' ? configured.trim() : '';
+    let command = typeof configured === 'string' ? configured.trim() : '';
+    if (lock && lock.autoExecAfterExpire === true && !command) {
+      command = '/home';
+    }
     if (!command) {
       return;
     }

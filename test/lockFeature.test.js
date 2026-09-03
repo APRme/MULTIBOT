@@ -186,3 +186,42 @@ test('LockFeature rejects lock from non-management sources', async () => {
   assert.equal(feature.getTeleportLockStatus().locked, false);
   feature.stop();
 });
+
+test('LockFeature parses trailing true/false auto-exec flag', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-lock-flag-'));
+  const lockHistoryPath = path.join(tempDir, 'lock_history.txt');
+  const feature = new LockFeature({ lockHistoryPath });
+  const context = createMockContext('whisper', 'example_player');
+
+  await feature.handleLockCommand(context, ['lock', '1m', '挂机', 'true']);
+  assert.equal(feature.getTeleportLockStatus().locked, true);
+  assert.equal(feature.getTeleportLockStatus().reason, '挂机');
+  assert.equal(feature.activeTeleportLock.autoExecAfterExpire, true);
+
+  await feature.handleUnlockCommand(createMockContext('whisper', 'example_player'), ['unlock']);
+  await feature.handleLockCommand(context, ['lock', '1h', '不回家', 'false']);
+  assert.equal(feature.activeTeleportLock.autoExecAfterExpire, false);
+  assert.equal(feature.getTeleportLockStatus().reason, '不回家');
+
+  await feature.handleUnlockCommand(createMockContext('whisper', 'example_player'), ['unlock']);
+  await feature.handleLockCommand(context, ['lock', '1h', '默认行为']);
+  assert.equal(feature.activeTeleportLock.autoExecAfterExpire, undefined);
+  feature.stop();
+});
+
+test('LockFeature usage text explains the true/false flag', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-lock-usage-'));
+  const lockHistoryPath = path.join(tempDir, 'lock_history.txt');
+  const feature = new LockFeature({ lockHistoryPath });
+  const context = createMockContext('whisper', 'example_player');
+
+  await feature.handleLockCommand(context, ['lock']);
+  assert.ok(context.messages.some((entry) => entry.message.includes('[true|false]')));
+  assert.ok(context.messages.some((entry) => entry.message.includes('true=')));
+
+  const context2 = createMockContext('whisper', 'example_player');
+  await feature.handleLockCommand(context2, ['lock', '1m']);
+  assert.ok(context2.messages.some((entry) => entry.message.includes('[true|false]')));
+  assert.ok(context2.messages.some((entry) => entry.message.includes('false=')));
+  feature.stop();
+});

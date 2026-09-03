@@ -1,8 +1,11 @@
 const path = require('path');
 const readline = require('readline');
-const { MultibotApp } = require('./src/app/MultibotApp');
+const { MultibotApp, MULTIBOT_VERSION } = require('./src/app/MultibotApp');
 
 async function main() {
+  // 启动第一条输出: 版本号(版本规则见 AGENTS.md)
+  console.log(`MULTIBOT ${MULTIBOT_VERSION}`);
+
   const configPath = process.argv[2]
     ? path.resolve(process.cwd(), process.argv[2])
     : path.join(__dirname, 'multibot.config.json');

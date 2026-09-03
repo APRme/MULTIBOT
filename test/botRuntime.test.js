@@ -1470,6 +1470,54 @@ test('BotRuntime skips lock-after-expire command when configured empty', () => {
   assert.equal(runtime.pendingLockExpireCommand, null);
 });
 
+test('BotRuntime honors per-lock autoExecAfterExpire override', () => {
+  const chats = [];
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: {
+        ...makeLegacyConfig({ entityHandling: false, terrainHandling: false }),
+        behavior: { lockAfterExpireCommand: '/home' }
+      }
+    }
+  });
+  runtime.state = 'online';
+  runtime.bot = {
+    chat(message) {
+      chats.push(message);
+    }
+  };
+
+  // false: 本次锁到期不执行
+  runtime.handleLockExpired({ owner: 'owner1', autoExecAfterExpire: false }, 'timer_expire');
+  assert.deepEqual(chats, []);
+  assert.equal(runtime.pendingLockExpireCommand, null);
+
+  // true: 执行
+  runtime.handleLockExpired({ owner: 'owner1', autoExecAfterExpire: true }, 'timer_expire');
+  assert.deepEqual(chats, ['/home']);
+});
+
+test('BotRuntime lock autoExecAfterExpire true falls back to /home when global config empty', () => {
+  const chats = [];
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: {
+        ...makeLegacyConfig({ entityHandling: false, terrainHandling: false }),
+        behavior: { lockAfterExpireCommand: '' }
+      }
+    }
+  });
+  runtime.state = 'online';
+  runtime.bot = {
+    chat(message) {
+      chats.push(message);
+    }
+  };
+
+  runtime.handleLockExpired({ owner: 'owner1', autoExecAfterExpire: true }, 'timer_expire');
+  assert.deepEqual(chats, ['/home']);
+});
+
 test('BotRuntime attachChunkBatchReply replies minimum rate on chunk_batch_finished', () => {
   const runtime = createRuntime({
     config: {

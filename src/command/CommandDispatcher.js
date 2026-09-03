@@ -153,7 +153,8 @@ class CommandDispatcher {
       return true;
     }
 
-    // 汇总所有在线 bot 的锁状态(whisper 任一 bot 即可查看, 找空闲 bot)
+    // 汇总所有在线 bot 的锁状态(whisper 任一 bot 即可查看, 找空闲 bot)。
+    // 单条消息回复(不逐行多发), 避免触发服务器消息数量限制。
     if (command === 'lockstatus' && rawParts.length === 1) {
       const statuses = this.runtime.getGlobalLockStatus();
       if (statuses.length === 0) {
@@ -161,21 +162,20 @@ class CommandDispatcher {
         return true;
       }
 
-      for (const entry of statuses) {
+      const parts = statuses.map((entry) => {
         const label = entry.username || entry.botId;
-        if (entry.lock && entry.lock.locked) {
-          const source = entry.lock.source === 'whisper'
-            ? '游戏内'
-            : (entry.lock.source === 'http' || entry.lock.source === 'console')
-              ? '面板'
-              : (entry.lock.source || '未知');
-          context.replyInfo(
-            `${label}: 已锁定 owner=${entry.lock.owner} 原因=${entry.lock.reason} 剩余=${entry.lock.remainingText} 来源=${source}`
-          );
-        } else {
-          context.replyInfo(`${label}: 未锁定`);
+        if (!entry.lock || !entry.lock.locked) {
+          return `${label}=未锁定`;
         }
-      }
+        const source = entry.lock.source === 'whisper'
+          ? '游戏内'
+          : (entry.lock.source === 'http' || entry.lock.source === 'console')
+            ? '面板'
+            : (entry.lock.source || '未知');
+        return `${label}=已锁定(${entry.lock.owner},${entry.lock.remainingText},${source})`;
+      });
+
+      context.replyInfo(`锁状态: ${parts.join(' | ')}`);
       return true;
     }
 

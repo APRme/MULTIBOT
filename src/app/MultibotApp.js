@@ -13,7 +13,7 @@ const { AggregateLogService } = require('../logging/AggregateLogService');
 const { ApiAccessLogService } = require('../logging/ApiAccessLogService');
 const { InstanceLifecycleLogService, LIFECYCLE_EVENTS } = require('../logging/InstanceLifecycleLogService');
 
-const MULTIBOT_VERSION = 'V26.4.7-OpenAuth';
+const MULTIBOT_VERSION = 'V26.4.8-OpenAuth';
 
 class MultibotApp {
   constructor(options = {}) {
@@ -114,7 +114,6 @@ class MultibotApp {
   }
 
   async start() {
-    console.log(`MULTIBOT ${MULTIBOT_VERSION}`);
     this.installGlobalExceptionGuards();
     this.applyNetworkDefaults();
 
@@ -199,5 +198,6 @@ class MultibotApp {
 }
 
 module.exports = {
-  MultibotApp
+  MultibotApp,
+  MULTIBOT_VERSION
 };

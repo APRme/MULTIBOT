@@ -188,6 +188,7 @@ class LockFeature {
             expiresAt: event.expiresAt,
             createdBy: event.actor || event.owner,
             source: event.source || 'whisper',
+            autoExecAfterExpire: event.autoExecAfterExpire,
             version: event.version || 1
           };
           continue;
@@ -330,7 +331,8 @@ class LockFeature {
 
     const currentStatus = this.getTeleportLockStatus();
     if (parts.length === 1) {
-      context.replyInfo('用法: lock <1s|1m|1h|1d> <原因>');
+      context.replyInfo('用法: lock <1s|1m|1h|1d> <原因> [true|false]');
+      context.replyInfo('true=到期后自动执行预设命令(默认/home)，false=不执行，缺省=跟随全局配置');
       if (!currentStatus.locked) {
         context.replyInfo('当前未锁定');
       } else {
@@ -345,9 +347,19 @@ class LockFeature {
       return true;
     }
 
-    const reason = parts.slice(2).join(' ').trim();
+    // 可选尾参 true/false: 控制锁到期后是否自动执行预设命令(默认 /home)
+    let autoExecAfterExpire;
+    const tailParts = parts.slice(2);
+    const lastPart = tailParts.length > 0 ? tailParts[tailParts.length - 1] : '';
+    if (lastPart && (lastPart.toLowerCase() === 'true' || lastPart.toLowerCase() === 'false')) {
+      autoExecAfterExpire = lastPart.toLowerCase() === 'true';
+      tailParts.pop();
+    }
+
+    const reason = tailParts.join(' ').trim();
     if (!reason) {
-      context.replyError('用法: lock <1s|1m|1h|1d> <原因>');
+      context.replyError('用法: lock <1s|1m|1h|1d> <原因> [true|false]');
+      context.replyError('true=到期后自动执行预设命令(默认/home)，false=不执行，缺省=跟随全局配置');
       return true;
     }
 
@@ -372,9 +384,11 @@ class LockFeature {
       source: context.source,
       version: 1
     };
+    if (autoExecAfterExpire !== undefined) {
+      lock.autoExecAfterExpire = autoExecAfterExpire;
+    }
 
-    this.activeTeleportLock = lock;
-    this.appendLockHistory({
+    const historyEntry = {
       type: 'lock',
       lockId: lock.lockId,
       owner: lock.owner,
@@ -385,14 +399,22 @@ class LockFeature {
       actor: owner,
       source: context.source,
       version: 1
-    });
+    };
+    if (autoExecAfterExpire !== undefined) {
+      historyEntry.autoExecAfterExpire = autoExecAfterExpire;
+    }
+
+    this.activeTeleportLock = lock;
+    this.appendLockHistory(historyEntry);
     this.scheduleTeleportLockExpiry();
 
     const status = this.getTeleportLockStatus();
     if (this.logger) {
-      this.logger.info(`[LOCK] created owner=${owner} source=${context.source} reason=${reason} remaining=${status.remainingText}`);
+      const flagText = autoExecAfterExpire === undefined ? 'default' : String(autoExecAfterExpire);
+      this.logger.info(`[LOCK] created owner=${owner} source=${context.source} autoExec=${flagText} reason=${reason} remaining=${status.remainingText}`);
     }
-    context.replyInfo(`锁定成功，原因: ${reason} 剩余锁定时间: ${status.remainingText}`);
+    const flagText = autoExecAfterExpire === undefined ? '' : ` 到期自动执行=${autoExecAfterExpire}`;
+    context.replyInfo(`锁定成功，原因: ${reason} 剩余锁定时间: ${status.remainingText}${flagText}`);
     return true;
   }
 
