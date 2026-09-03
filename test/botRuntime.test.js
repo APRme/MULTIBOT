@@ -1343,6 +1343,80 @@ test('BotRuntime isLightweightMode only when both capabilities are disabled', ()
   assert.equal(light.isLightweightMode(), true);
 });
 
+test('BotRuntime attachChunkBatchReply replies minimum rate on chunk_batch_finished', () => {
+  const runtime = createRuntime({
+    config: {
+      chunkBatchReplyChunksPerTick: 0.01,
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const writes = [];
+  const client = new EventEmitter();
+  client.write = (name, payload) => {
+    writes.push({ name, payload });
+  };
+
+  runtime.attachChunkBatchReply({ _client: client });
+
+  client.emit('chunk_batch_finished', { batchSize: 9 });
+  client.emit('chunk_batch_finished', { batchSize: 3 });
+
+  assert.deepEqual(writes, [
+    { name: 'chunk_batch_received', payload: { chunksPerTick: 0.01 } },
+    { name: 'chunk_batch_received', payload: { chunksPerTick: 0.01 } }
+  ]);
+  runtime.detachRuntimeListeners();
+});
+
+test('BotRuntime attachChunkBatchReply stays silent when configured to zero or missing', () => {
+  const disabled = createRuntime({
+    config: {
+      chunkBatchReplyChunksPerTick: 0,
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const writes = [];
+  const client = new EventEmitter();
+  client.write = (name, payload) => {
+    writes.push({ name, payload });
+  };
+
+  disabled.attachChunkBatchReply({ _client: client });
+  client.emit('chunk_batch_finished', { batchSize: 9 });
+  assert.equal(writes.length, 0);
+  disabled.detachRuntimeListeners();
+
+  const missing = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const writes2 = [];
+  const client2 = new EventEmitter();
+  client2.write = (name, payload) => {
+    writes2.push({ name, payload });
+  };
+
+  missing.attachChunkBatchReply({ _client: client2 });
+  client2.emit('chunk_batch_finished', { batchSize: 9 });
+  assert.equal(writes2.length, 0);
+  missing.detachRuntimeListeners();
+});
+
+test('BotRuntime attachChunkBatchReply tolerates a client without write', () => {
+  const runtime = createRuntime({
+    config: {
+      chunkBatchReplyChunksPerTick: 0.01,
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const client = new EventEmitter();
+
+  runtime.attachChunkBatchReply({ _client: client });
+  client.emit('chunk_batch_finished', { batchSize: 9 });
+  runtime.detachRuntimeListeners();
+});
+
 test('BotRuntime createMineflayerOptions whitelists plugins in lightweight mode', () => {
   const runtime = createRuntime({
     config: {

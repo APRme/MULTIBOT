@@ -67,6 +67,19 @@ function normalizeNonNegativeInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+// chunk_batch_received 回包的 chunksPerTick（轻量模式专用）:
+// 缺失/null -> 0.01(服务端下限,尽量少推区块); 0 -> 禁用回包; 正数 -> 钳制在服务端允许区间 0.01..64
+function normalizeChunkBatchReplyChunksPerTick(value) {
+  if (value === undefined || value === null || value === '') {
+    return 0.01;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return 0;
+  }
+  return Math.min(Math.max(numeric, 0.01), 64);
+}
+
 function normalizeAllowedOrigins(value) {
   if (!Array.isArray(value)) {
     return [
@@ -374,6 +387,7 @@ function extractRuntimeOverrides(source) {
     'username',
     'email',
     'viewDistance',
+    'chunkBatchReplyChunksPerTick',
     'disableChatSigning',
     'checkTimeoutInterval',
     'restartOnDisconnect',
@@ -434,7 +448,8 @@ function buildBotConfig(options = {}) {
     version: merged.version || false,
     username: merged.username || merged.email,
     email: merged.email || merged.username,
-    viewDistance: merged.viewDistance || 'tiny',
+    viewDistance: merged.viewDistance || 2,
+    chunkBatchReplyChunksPerTick: normalizeChunkBatchReplyChunksPerTick(merged.chunkBatchReplyChunksPerTick),
     disableChatSigning: merged.disableChatSigning !== false,
     checkTimeoutInterval: normalizePositiveInteger(merged.checkTimeoutInterval, 30000),
     restartOnDisconnect: merged.restartOnDisconnect !== false,
@@ -706,6 +721,7 @@ module.exports = {
   readJsonFile,
   extractRuntimeOverrides,
   buildBotConfig,
+  normalizeChunkBatchReplyChunksPerTick,
   discoverBots,
   buildDiscoveredBotConfig
 };

@@ -7,6 +7,7 @@ const {
   loadMasterConfig,
   normalizeAllowedOrigins,
   normalizeOpenAuthConfig,
+  normalizeChunkBatchReplyChunksPerTick,
   buildDiscoveredBotConfig
 } = require('../src/config/loadMasterConfig');
 
@@ -1215,3 +1216,73 @@ test('buildDiscoveredBotConfig matches discovery for restart schedule fields', (
   assert.deepEqual(rebuilt.restartDelayScheduleMs, discovered.restartDelayScheduleMs);
   assert.equal(rebuilt.restartDelayScheduleRepeatLast, discovered.restartDelayScheduleRepeatLast);
 });
+
+test('normalizeChunkBatchReplyChunksPerTick defaults to minimum and honors disable', () => {
+  assert.equal(normalizeChunkBatchReplyChunksPerTick(undefined), 0.01);
+  assert.equal(normalizeChunkBatchReplyChunksPerTick(null), 0.01);
+  assert.equal(normalizeChunkBatchReplyChunksPerTick(''), 0.01);
+  assert.equal(normalizeChunkBatchReplyChunksPerTick(0), 0);
+  assert.equal(normalizeChunkBatchReplyChunksPerTick(-1), 0);
+  assert.equal(normalizeChunkBatchReplyChunksPerTick('0.05'), 0.05);
+  assert.equal(normalizeChunkBatchReplyChunksPerTick(100), 64);
+  assert.equal(normalizeChunkBatchReplyChunksPerTick('abc'), 0);
+});
+
+test('buildDiscoveredBotConfig defaults viewDistance 2 and chunk batch reply 0.01', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-vd-default-'));
+  const appRoot = path.join(repoRoot, 'tests', 'MULTIBOT');
+  const serverDir = path.join(appRoot, 'BOTS', 'my_server');
+  const botDir = path.join(serverDir, 'Alpha');
+
+  fs.mkdirSync(botDir, { recursive: true });
+  fs.writeFileSync(path.join(serverDir, 'server.json'), JSON.stringify({
+    host: '127.0.0.1',
+    port: 25565
+  }), 'utf8');
+  fs.writeFileSync(path.join(botDir, 'config.json'), JSON.stringify({
+    username: 'alpha@example.com',
+    email: 'alpha@example.com'
+  }), 'utf8');
+
+  const rebuilt = buildDiscoveredBotConfig({
+    repoRoot,
+    appRoot,
+    defaults: {},
+    serverDirName: 'my_server',
+    botDirName: 'Alpha'
+  });
+
+  assert.equal(rebuilt.viewDistance, 2);
+  assert.equal(rebuilt.chunkBatchReplyChunksPerTick, 0.01);
+});
+
+test('buildDiscoveredBotConfig honors explicit viewDistance and chunk batch reply values', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-vd-explicit-'));
+  const appRoot = path.join(repoRoot, 'tests', 'MULTIBOT');
+  const serverDir = path.join(appRoot, 'BOTS', 'my_server');
+  const botDir = path.join(serverDir, 'Alpha');
+
+  fs.mkdirSync(botDir, { recursive: true });
+  fs.writeFileSync(path.join(serverDir, 'server.json'), JSON.stringify({
+    host: '127.0.0.1',
+    port: 25565,
+    viewDistance: 4,
+    chunkBatchReplyChunksPerTick: 0
+  }), 'utf8');
+  fs.writeFileSync(path.join(botDir, 'config.json'), JSON.stringify({
+    username: 'alpha@example.com',
+    email: 'alpha@example.com'
+  }), 'utf8');
+
+  const rebuilt = buildDiscoveredBotConfig({
+    repoRoot,
+    appRoot,
+    defaults: {},
+    serverDirName: 'my_server',
+    botDirName: 'Alpha'
+  });
+
+  assert.equal(rebuilt.viewDistance, 4);
+  assert.equal(rebuilt.chunkBatchReplyChunksPerTick, 0);
+});
+

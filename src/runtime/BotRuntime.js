@@ -1041,6 +1041,29 @@ class BotRuntime {
     registerPacketCounter('chunk_batch_finished', 'chunkBatchFinished');
   }
 
+  // 轻量模式(bot 不加载区块)下: 服务器按客户端回报速率(chunk_batch_received)推送区块,
+  // 收到 chunk_batch_finished 即回最低速率(chunkBatchReplyChunksPerTick, 服务端下限 0.01 区块/tick),
+  // 让服务器尽量少推区块/相关实体数据。配置为 0 或缺失有效值时跳过(不回包)。
+  attachChunkBatchReply(bot) {
+    const client = bot && bot._client;
+    if (!client || typeof client.on !== 'function' || typeof client.write !== 'function') {
+      return;
+    }
+
+    const chunksPerTick = this.config?.chunkBatchReplyChunksPerTick;
+    if (typeof chunksPerTick !== 'number' || chunksPerTick <= 0) {
+      return;
+    }
+
+    this.logger.info(`[BOT] chunk batch reply armed chunksPerTick=${chunksPerTick} (lightweight)`);
+
+    this.addRuntimeListener(client, 'chunk_batch_finished', () => {
+      client.write('chunk_batch_received', {
+        chunksPerTick
+      });
+    });
+  }
+
   refreshWorldColumnDiagnostics() {
     const count = this.getWorldColumnCount();
     if (count > this.diagnostics.maxWorldColumns) {
@@ -1237,7 +1260,7 @@ class BotRuntime {
       `[BOT] connecting host=${this.config.host} port=${this.config.port} username=${this.config.username} auth=${this.config.auth}`
     );
     this.logger.info(
-      `[CAP] entityHandling=${this.isEntityHandlingEnabled()} terrainHandling=${this.isTerrainHandlingEnabled()}`
+      `[CAP] entityHandling=${this.isEntityHandlingEnabled()} terrainHandling=${this.isTerrainHandlingEnabled()} viewDistance=${this.config.viewDistance} chunkBatchReply=${this.config.chunkBatchReplyChunksPerTick}`
     );
     this.publishStatus();
 
@@ -1378,6 +1401,10 @@ class BotRuntime {
             };
           }
         });
+
+        // 服务器按客户端回报速率(chunk_batch_received)推送区块; 轻量 bot 不加载区块,
+        // 回最低速率让服务器尽量少推。注意完整模式由 blocks 插件回包, 仅轻量模式注册避免双写。
+        this.attachChunkBatchReply(bot);
       }
       // 诊断：打印 configuration 阶段收到的包名（diagnostics.configurationPacketLog 开启时）
       if (this.diagnosticsConfig?.configurationPacketLog === true && bot._client) {
