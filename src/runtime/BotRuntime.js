@@ -1378,6 +1378,12 @@ class BotRuntime {
             };
           }
         });
+        // 临时诊断：打印 configuration 阶段收到的包，用于定位云端卡 configuration 的原因
+        this.addRuntimeListener(bot._client, 'packet', (data, meta) => {
+          if (bot._client.state === 'configuration' && meta && meta.name) {
+            this.logger.info(`[CFG-DEBUG] ${meta.name}`);
+          }
+        });
       }
 
       if (bot._client.deserializer) {
