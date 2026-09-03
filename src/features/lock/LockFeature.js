@@ -135,7 +135,8 @@ class LockFeature {
         reason: null,
         expiresAt: null,
         remainingMs: 0,
-        remainingText: '0s'
+        remainingText: '0s',
+        source: null
       };
     }
 
@@ -148,7 +149,8 @@ class LockFeature {
         reason: null,
         expiresAt: null,
         remainingMs: 0,
-        remainingText: '0s'
+        remainingText: '0s',
+        source: null
       };
     }
 
@@ -158,7 +160,8 @@ class LockFeature {
       reason: this.activeTeleportLock.reason,
       expiresAt: this.activeTeleportLock.expiresAt,
       remainingMs,
-      remainingText: this.formatLockRemaining(remainingMs)
+      remainingText: this.formatLockRemaining(remainingMs),
+      source: this.activeTeleportLock.source || 'whisper'
     };
   }
 
@@ -319,8 +322,9 @@ class LockFeature {
   async handleLockCommand(context, parts) {
     if (String(parts[0] || '').toLowerCase() !== 'lock') return false;
 
-    if (context.source !== 'whisper') {
-      context.replyError('lock 仅允许管理员私聊使用');
+    // 允许管理通道创建锁: 游戏内私聊(whisper, 已过 trusted 过滤)与面板/HTTP(http/console, token 鉴权)
+    if (!['whisper', 'http', 'console'].includes(context.source)) {
+      context.replyError('lock 仅允许管理员（游戏内私聊或面板）使用');
       return true;
     }
 
@@ -352,7 +356,9 @@ class LockFeature {
       return true;
     }
 
-    const owner = context.sender;
+    // 面板/HTTP 来源的锁 owner 统一标识为 CONSOLE(控制台), 与游戏内玩家锁区分展示
+    const isPanelSource = context.source === 'http' || context.source === 'console';
+    const owner = isPanelSource ? 'CONSOLE' : context.sender;
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + durationMs).toISOString();
     const lock = {
@@ -363,7 +369,7 @@ class LockFeature {
       createdAt,
       expiresAt,
       createdBy: owner,
-      source: 'whisper',
+      source: context.source,
       version: 1
     };
 
@@ -377,14 +383,14 @@ class LockFeature {
       createdAt: lock.createdAt,
       expiresAt: lock.expiresAt,
       actor: owner,
-      source: 'whisper',
+      source: context.source,
       version: 1
     });
     this.scheduleTeleportLockExpiry();
 
     const status = this.getTeleportLockStatus();
     if (this.logger) {
-      this.logger.info(`[LOCK] created owner=${owner} reason=${reason} remaining=${status.remainingText}`);
+      this.logger.info(`[LOCK] created owner=${owner} source=${context.source} reason=${reason} remaining=${status.remainingText}`);
     }
     context.replyInfo(`锁定成功，原因: ${reason} 剩余锁定时间: ${status.remainingText}`);
     return true;
@@ -393,8 +399,9 @@ class LockFeature {
   async handleUnlockCommand(context, parts) {
     if (String(parts[0] || '').toLowerCase() !== 'unlock') return false;
 
-    if (context.source !== 'whisper') {
-      context.replyError('unlock 仅允许管理员私聊使用');
+    // 与 lock 一致: 任何管理通道(游戏内私聊/面板)都可解锁, 权限不区分来源
+    if (!['whisper', 'http', 'console'].includes(context.source)) {
+      context.replyError('unlock 仅允许管理员（游戏内私聊或面板）使用');
       return true;
     }
 
@@ -404,7 +411,12 @@ class LockFeature {
       return true;
     }
 
-    this.unlockActiveTeleportLock(context.sender || context.label || 'unknown', 'manual_unlock');
+    this.unlockActiveTeleportLock(
+      context.source === 'http' || context.source === 'console'
+        ? 'CONSOLE'
+        : (context.sender || context.label || 'unknown'),
+      'manual_unlock'
+    );
     context.replyInfo('已解锁');
     return true;
   }

@@ -153,3 +153,36 @@ test('LockFeature allows lockstatus during lock for non-owners', async () => {
   assert.equal(feature.isAllowedWhisperCommandDuringLock('lockstatus', ['lockstatus']), true);
   feature.stop();
 });
+
+test('LockFeature accepts panel (http/console) sources and records owner CONSOLE', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-lock-panel-'));
+  const lockHistoryPath = path.join(tempDir, 'lock_history.txt');
+  const feature = new LockFeature({ lockHistoryPath });
+
+  const panelContext = createMockContext('http', 'panel');
+  const handled = await feature.handleLockCommand(panelContext, ['lock', '1m', '面板维护']);
+
+  assert.equal(handled, true);
+  const status = feature.getTeleportLockStatus();
+  assert.equal(status.locked, true);
+  assert.equal(status.owner, 'CONSOLE');
+  assert.equal(status.source, 'http');
+
+  const consoleContext = createMockContext('console', 'panel');
+  assert.equal(await feature.handleUnlockCommand(consoleContext, ['unlock']), true);
+  assert.equal(feature.getTeleportLockStatus().locked, false);
+  feature.stop();
+});
+
+test('LockFeature rejects lock from non-management sources', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-lock-badsource-'));
+  const lockHistoryPath = path.join(tempDir, 'lock_history.txt');
+  const feature = new LockFeature({ lockHistoryPath });
+
+  const context = createMockContext('broadcast', 'bot-a');
+  assert.equal(await feature.handleLockCommand(context, ['lock', '1m', 'x']), true);
+  assert.equal(context.messages[0].type, 'error');
+  assert.match(context.messages[0].message, /仅允许管理员/);
+  assert.equal(feature.getTeleportLockStatus().locked, false);
+  feature.stop();
+});

@@ -28,7 +28,13 @@ test('CommandDispatcher lockstatus replies per-bot lock summary', async () => {
         botId: 'beta',
         username: 'Beta',
         state: 'online',
-        lock: { locked: true, owner: 'owner1', reason: '挂机', remainingText: '30m' }
+        lock: { locked: true, owner: 'owner1', reason: '挂机', remainingText: '30m', source: 'http' }
+      },
+      {
+        botId: 'gamma',
+        username: 'Gamma',
+        state: 'online',
+        lock: { locked: true, owner: 'owner2', reason: '任务', remainingText: '1h', source: 'whisper' }
       }
     ]
   });
@@ -36,9 +42,10 @@ test('CommandDispatcher lockstatus replies per-bot lock summary', async () => {
 
   await dispatcher.dispatch('lockstatus', context);
 
-  assert.equal(context.messages.length, 2);
+  assert.equal(context.messages.length, 3);
   assert.equal(context.messages[0].message, 'Alpha: 未锁定');
-  assert.equal(context.messages[1].message, 'Beta: 已锁定 owner=owner1 原因=挂机 剩余=30m');
+  assert.equal(context.messages[1].message, 'Beta: 已锁定 owner=owner1 原因=挂机 剩余=30m 来源=面板');
+  assert.equal(context.messages[2].message, 'Gamma: 已锁定 owner=owner2 原因=任务 剩余=1h 来源=游戏内');
 });
 
 test('CommandDispatcher lockstatus reports no online bots when list is empty', async () => {

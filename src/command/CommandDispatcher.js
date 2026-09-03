@@ -164,8 +164,13 @@ class CommandDispatcher {
       for (const entry of statuses) {
         const label = entry.username || entry.botId;
         if (entry.lock && entry.lock.locked) {
+          const source = entry.lock.source === 'whisper'
+            ? '游戏内'
+            : (entry.lock.source === 'http' || entry.lock.source === 'console')
+              ? '面板'
+              : (entry.lock.source || '未知');
           context.replyInfo(
-            `${label}: 已锁定 owner=${entry.lock.owner} 原因=${entry.lock.reason} 剩余=${entry.lock.remainingText}`
+            `${label}: 已锁定 owner=${entry.lock.owner} 原因=${entry.lock.reason} 剩余=${entry.lock.remainingText} 来源=${source}`
           );
         } else {
           context.replyInfo(`${label}: 未锁定`);
