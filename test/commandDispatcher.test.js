@@ -22,7 +22,8 @@ function createContext(overrides = {}) {
 function createDispatcher(calls, overrides = {}) {
   const capabilities = overrides.capabilities || {
     entityHandling: true,
-    terrainHandling: true
+    terrainHandling: true,
+    inventoryHandling: true
   };
 
   const runtime = {
@@ -305,7 +306,7 @@ test('CommandDispatcher routes migrated MULTIBOT commands', async () => {
 
   assert.ok(context.messages.some((entry) => entry.message.includes('broadcast inv <子命令>')));
   assert.ok(context.messages.some((entry) => entry.message.includes('broadcast eat <物品id>')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=on terrainHandling=on')));
+  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=on terrainHandling=on inventoryHandling=on')));
   assert.ok(context.messages.some((entry) => entry.message.includes('已广播执行: inv dropall')));
   assert.ok(context.messages.some((entry) => entry.message.includes('已广播执行: eat bread')));
   assert.ok(context.messages.some((entry) => entry.message.includes('快捷栏信息: 1:stone')));
@@ -383,7 +384,8 @@ test('CommandDispatcher blocks entity-gated commands when entityHandling is disa
   const dispatcher = createDispatcher(calls, {
     capabilities: {
       entityHandling: false,
-      terrainHandling: true
+      terrainHandling: true,
+      inventoryHandling: true
     }
   });
   const context = createContext();
@@ -398,7 +400,7 @@ test('CommandDispatcher blocks entity-gated commands when entityHandling is disa
 
   assert.deepEqual(calls, [['dig', 1, 2, 3]]);
   assert.ok(context.messages.some((entry) => entry.message.includes('attack @n [已禁用: entityHandling]')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=off terrainHandling=on')));
+  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=off terrainHandling=on inventoryHandling=on')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 attack @n')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 interact @n')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 fish')));
@@ -411,7 +413,8 @@ test('CommandDispatcher blocks terrain-gated commands when terrainHandling is di
   const dispatcher = createDispatcher(calls, {
     capabilities: {
       entityHandling: true,
-      terrainHandling: false
+      terrainHandling: false,
+      inventoryHandling: true
     }
   });
   const context = createContext();
@@ -436,7 +439,7 @@ test('CommandDispatcher blocks terrain-gated commands when terrainHandling is di
   ]);
   assert.ok(context.messages.some((entry) => entry.message.includes('goto <x> <y> <z> [选项...] [已禁用: terrainHandling]')));
   assert.ok(context.messages.some((entry) => entry.message.includes('ride | ride player | ride w [a] [已禁用: terrainHandling]')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=on terrainHandling=off')));
+  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=on terrainHandling=off inventoryHandling=on')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 goto')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 useblock')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 dig')));

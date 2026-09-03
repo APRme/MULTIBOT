@@ -49,7 +49,8 @@ test('loadLegacyBotConfig defaults capabilities to enabled', () => {
   assert.deepEqual(config.trustedPlayers, []);
   assert.deepEqual(config.capabilities, {
     entityHandling: true,
-    terrainHandling: true
+    terrainHandling: true,
+    inventoryHandling: true
   });
 });
 
@@ -77,7 +78,8 @@ test('loadLegacyBotConfig lets instance config override inherited capability def
 
   assert.deepEqual(config.capabilities, {
     entityHandling: true,
-    terrainHandling: false
+    terrainHandling: false,
+    inventoryHandling: true
   });
 });
 

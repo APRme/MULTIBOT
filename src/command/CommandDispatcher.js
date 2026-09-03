@@ -29,7 +29,8 @@ class CommandDispatcher {
 
     return {
       entityHandling: true,
-      terrainHandling: true
+      terrainHandling: true,
+      inventoryHandling: true
     };
   }
 
@@ -129,7 +130,7 @@ class CommandDispatcher {
       '  abortrecord',
       withCapability('entity list', { entityHandling: true }),
       '  lock / unlock',
-      `当前能力: entityHandling=${capabilities.entityHandling ? 'on' : 'off'} terrainHandling=${capabilities.terrainHandling ? 'on' : 'off'}`
+      `当前能力: entityHandling=${capabilities.entityHandling ? 'on' : 'off'} terrainHandling=${capabilities.terrainHandling ? 'on' : 'off'} inventoryHandling=${capabilities.inventoryHandling ? 'on' : 'off'}`
     ];
   }
 

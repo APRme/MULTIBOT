@@ -225,7 +225,8 @@ test('BotRuntime exposes action and restart state in summaries', () => {
   });
   assert.deepEqual(summary.capabilities, {
     entityHandling: true,
-    terrainHandling: true
+    terrainHandling: true,
+    inventoryHandling: true
   });
   assert.equal(summary.restart.disconnectPolicyEnabled, true);
   assert.equal(summary.restart.disconnectDelayMs, 1234);
@@ -285,11 +286,13 @@ test('BotRuntime exposes disabled capabilities in summaries', () => {
 
   assert.deepEqual(runtime.getCapabilities(), {
     entityHandling: false,
-    terrainHandling: true
+    terrainHandling: true,
+    inventoryHandling: true
   });
   assert.deepEqual(runtime.getSummary().capabilities, {
     entityHandling: false,
-    terrainHandling: true
+    terrainHandling: true,
+    inventoryHandling: true
   });
 });
 
@@ -1341,6 +1344,55 @@ test('BotRuntime isLightweightMode only when both capabilities are disabled', ()
 
   const light = createRuntime({ config: { legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false }) } });
   assert.equal(light.isLightweightMode(), true);
+});
+
+test('BotRuntime isInventoryHandlingEnabled defaults on and honors explicit disable', () => {
+  const on = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  assert.equal(on.isInventoryHandlingEnabled(), true);
+
+  const off = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({
+        entityHandling: false,
+        terrainHandling: false,
+        inventoryHandling: false
+      })
+    }
+  });
+  assert.equal(off.isInventoryHandlingEnabled(), false);
+});
+
+test('BotRuntime attachLightInventoryCore mounts zero-entity inventory on lightweight bot', () => {
+  const registry = require('prismarine-registry')('1.21.11');
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const writes = [];
+  const client = new EventEmitter();
+  client.write = (name, payload) => {
+    writes.push({ name, payload });
+  };
+  const bot = {
+    _client: client,
+    registry,
+    version: '1.21.11'
+  };
+
+  runtime.attachLightInventoryCore(bot);
+
+  assert.ok(bot.inventory, 'bot.inventory mounted');
+  assert.equal(bot.inventory.id, 0);
+  assert.equal(typeof bot.clickWindow, 'function');
+  assert.equal(typeof bot.toss, 'function');
+  assert.equal(typeof bot.moveSlotItem, 'function');
+  assert.equal(typeof bot.setQuickBarSlot, 'function');
+  runtime.detachRuntimeListeners();
 });
 
 test('BotRuntime attachChunkBatchReply replies minimum rate on chunk_batch_finished', () => {

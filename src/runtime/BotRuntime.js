@@ -251,7 +251,8 @@ function normalizeCapabilitiesConfig(legacyConfig = {}) {
 
   return {
     entityHandling: capabilities.entityHandling !== false,
-    terrainHandling: capabilities.terrainHandling !== false
+    terrainHandling: capabilities.terrainHandling !== false,
+    inventoryHandling: capabilities.inventoryHandling !== false
   };
 }
 
@@ -540,7 +541,8 @@ class BotRuntime {
   getCapabilities() {
     return {
       entityHandling: this.capabilities.entityHandling !== false,
-      terrainHandling: this.capabilities.terrainHandling !== false
+      terrainHandling: this.capabilities.terrainHandling !== false,
+      inventoryHandling: this.capabilities.inventoryHandling !== false
     };
   }
 
@@ -550,6 +552,10 @@ class BotRuntime {
 
   isTerrainHandlingEnabled() {
     return this.getCapabilities().terrainHandling;
+  }
+
+  isInventoryHandlingEnabled() {
+    return this.getCapabilities().inventoryHandling;
   }
 
   // 轻量模式：entityHandling 与 terrainHandling 同时为 false 时，
@@ -1064,6 +1070,26 @@ class BotRuntime {
     });
   }
 
+  // 轻量模式专属背包核心: 零实体依赖(收 window_items/set_slot 自维护 window0),
+  // 让复用 inv 命令的 InventoryFeature 在无 mineflayer inventory 插件时也能工作。
+  attachLightInventoryCore(bot) {
+    const client = bot && bot._client;
+    if (!client || typeof client.on !== 'function' || typeof client.write !== 'function') {
+      return;
+    }
+
+    try {
+      const { attachLightInventory } = require('../features/inventory/lightInventoryCore');
+      attachLightInventory(bot, {
+        addListener: (target, event, handler) => this.addRuntimeListener(target, event, handler),
+        logger: this.logger
+      });
+    } catch (error) {
+      this.logger.error('[BOT] lightweight inventory core attach failed', error);
+      this.logCapabilitySkip('inventory', 'because lightweight inventory core attach failed');
+    }
+  }
+
   refreshWorldColumnDiagnostics() {
     const count = this.getWorldColumnCount();
     if (count > this.diagnostics.maxWorldColumns) {
@@ -1260,7 +1286,7 @@ class BotRuntime {
       `[BOT] connecting host=${this.config.host} port=${this.config.port} username=${this.config.username} auth=${this.config.auth}`
     );
     this.logger.info(
-      `[CAP] entityHandling=${this.isEntityHandlingEnabled()} terrainHandling=${this.isTerrainHandlingEnabled()} viewDistance=${this.config.viewDistance} chunkBatchReply=${this.config.chunkBatchReplyChunksPerTick}`
+      `[CAP] entityHandling=${this.isEntityHandlingEnabled()} terrainHandling=${this.isTerrainHandlingEnabled()} inventoryHandling=${this.isInventoryHandlingEnabled()} viewDistance=${this.config.viewDistance} chunkBatchReply=${this.config.chunkBatchReplyChunksPerTick}`
     );
     this.publishStatus();
 
@@ -1445,8 +1471,16 @@ class BotRuntime {
     this.teleportFeature.attach(bot);
     this.activityLogFeature.attach(bot);
     if (this.isLightweightMode()) {
-      // 轻量模式：无实体/物理/背包插件，跳过依赖它们的 feature
-      this.logCapabilitySkip('inventory/window/movement/eat', 'because lightweight mode (no entity/terrain)');
+      // 轻量模式：无实体/物理/地形插件。inventoryHandling=true 时用零实体依赖的
+      // 轻量背包核心(收 window_items/set_slot 自维护 window0)复用 inv 命令；
+      // window/chest(容器)、movement、eat 仍跳过。
+      if (this.isInventoryHandlingEnabled()) {
+        this.attachLightInventoryCore(bot);
+        this.inventoryFeature.attach(bot);
+        this.logCapabilitySkip('window/chest/movement/eat', 'because lightweight mode (no container/entity/terrain)');
+      } else {
+        this.logCapabilitySkip('inventory/window/movement/eat', 'because lightweight mode (no entity/terrain)');
+      }
     } else {
       this.inventoryFeature.attach(bot);
       this.windowFeature.attach(bot);

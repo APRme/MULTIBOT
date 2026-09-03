@@ -195,7 +195,8 @@ function getDefaultLegacyConfig() {
     },
     capabilities: {
       entityHandling: true,
-      terrainHandling: true
+      terrainHandling: true,
+      inventoryHandling: true
     },
     display: {
       consoleUseAnsi: false
@@ -345,6 +346,10 @@ function normalizeLegacyConfig(rawConfig, defaultConfig = getDefaultLegacyConfig
       terrainHandling: normalizeBoolean(
         rawConfig.capabilities?.terrainHandling,
         defaultConfig.capabilities.terrainHandling
+      ),
+      inventoryHandling: normalizeBoolean(
+        rawConfig.capabilities?.inventoryHandling,
+        defaultConfig.capabilities.inventoryHandling
       )
     },
     display: {
