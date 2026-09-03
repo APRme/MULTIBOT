@@ -185,7 +185,7 @@ test('TeleportFeature tpahere obeys lock and owner bypass', (t) => {
   feature.handleTeleportHereRequest('Owner');
 
   assert.deepEqual(chats, [
-    '/tpdeny',
+    '/tpdeny example_player',
     '/minecraft:w example_player 已锁定，锁定人: Owner 原因: busy 剩余锁定时间: 30s',
     '/tpaccept',
     '/minecraft:w Owner 已接受你的传送请求。'

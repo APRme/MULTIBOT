@@ -625,37 +625,63 @@ class BotRuntime {
     this.flushPendingLockExpireCommand();
   }
 
-  // 锁自然到期(计时器/重启恢复发现已过期)后执行预设命令(behavior.lockAfterExpireCommand, 默认 /home);
-  // bot 在线直接 chat, 离线则挂起待重连后补执行一次; 手动 unlock 不触发。
-  // lock 对象可带 autoExecAfterExpire 覆盖: false=本次锁到期不执行, true=执行(全局配置为空时回退 /home)。
+  // 锁自然到期(计时器/重启恢复发现已过期)后: 1)按预设执行命令(behavior.lockAfterExpireCommand,
+  // 默认 /home; lock.autoExecAfterExpire 可覆盖: false=本次不执行, true=全局为空时回退 /home);
+  // 2)私聊锁定人通知到期及执行情况(仅到期那一刻 bot 在线时发一次; 掉线错过不补发;
+  // 面板锁 owner=CONSOLE 无游戏内目标, 不发)。手动 unlock 不触发。
   handleLockExpired(lock, reason) {
-    if (lock && lock.autoExecAfterExpire === false) {
-      this.logger.info('[LOCK] after expire skipped (lock autoExecAfterExpire=false)');
-      return;
-    }
-
-    const configured = this.config?.legacyConfig?.behavior?.lockAfterExpireCommand;
-    let command = typeof configured === 'string' ? configured.trim() : '';
-    if (lock && lock.autoExecAfterExpire === true && !command) {
-      command = '/home';
-    }
-    if (!command) {
-      return;
-    }
-
-    if (this.state === 'online' && this.bot && typeof this.bot.chat === 'function') {
-      this.pendingLockExpireCommand = null;
-      try {
-        this.bot.chat(command);
-        this.logger.info(`[LOCK] after expire executed command=${command} owner=${lock.owner} reason=${reason}`);
-      } catch (error) {
-        this.logger.error(`[LOCK] after expire command failed: ${error.message}`);
+    let command = null;
+    if (!(lock && lock.autoExecAfterExpire === false)) {
+      const configured = this.config?.legacyConfig?.behavior?.lockAfterExpireCommand;
+      let candidate = typeof configured === 'string' ? configured.trim() : '';
+      if (lock && lock.autoExecAfterExpire === true && !candidate) {
+        candidate = '/home';
       }
+      command = candidate || null;
+    }
+
+    if (command) {
+      if (this.state === 'online' && this.bot && typeof this.bot.chat === 'function') {
+        this.pendingLockExpireCommand = null;
+        try {
+          this.bot.chat(command);
+          this.logger.info(`[LOCK] after expire executed command=${command} owner=${lock.owner} reason=${reason}`);
+        } catch (error) {
+          this.logger.error(`[LOCK] after expire command failed: ${error.message}`);
+        }
+      } else {
+        this.pendingLockExpireCommand = command;
+        this.logger.info(`[LOCK] after expire command pending (bot offline) command=${command}`);
+      }
+    } else {
+      this.logger.info(`[LOCK] after expire skipped owner=${lock && lock.owner} reason=${reason}`);
+    }
+
+    this.notifyLockOwnerExpired(lock, command ? '已执行' : '未执行', command);
+  }
+
+  // 到期通知: 仅 bot 在线时向锁定人私聊一次(与命令回复同渠道 /minecraft:w); 掉线错过不补发;
+  // 面板锁(owner=CONSOLE)与未锁定对象不发。
+  notifyLockOwnerExpired(lock, statusText, command) {
+    if (!lock || !lock.owner || lock.owner === 'CONSOLE') {
+      return;
+    }
+    if (this.state !== 'online' || !this.bot || typeof this.bot.chat !== 'function') {
       return;
     }
 
-    this.pendingLockExpireCommand = command;
-    this.logger.info(`[LOCK] after expire command pending (bot offline) command=${command}`);
+    const reasonText = lock.reason ? `原因: ${lock.reason}` : '';
+    const execText = statusText === '已执行' && command
+      ? `预设命令已执行: ${command}`
+      : '预设命令未执行';
+    const message = `锁已到期${reasonText ? `(${reasonText})` : ''}，${execText}`;
+
+    try {
+      this.bot.chat(`/minecraft:w ${lock.owner} ${message}`);
+      this.logger.info(`[LOCK] expire notify owner=${lock.owner} message=${message}`);
+    } catch (error) {
+      this.logger.error(`[LOCK] expire notify failed owner=${lock.owner}: ${error.message}`);
+    }
   }
 
   flushPendingLockExpireCommand() {

@@ -1414,7 +1414,7 @@ test('BotRuntime executes lock-after-expire command when online', () => {
 
   runtime.handleLockExpired({ owner: 'owner1' }, 'timer_expire');
 
-  assert.deepEqual(chats, ['/home']);
+  assert.deepEqual(chats, ['/home', '/minecraft:w owner1 锁已到期，预设命令已执行: /home']);
   assert.equal(runtime.pendingLockExpireCommand, null);
 });
 
@@ -1466,7 +1466,7 @@ test('BotRuntime skips lock-after-expire command when configured empty', () => {
 
   runtime.handleLockExpired({ owner: 'owner1' }, 'timer_expire');
 
-  assert.deepEqual(chats, []);
+  assert.deepEqual(chats, ['/minecraft:w owner1 锁已到期，预设命令未执行']);
   assert.equal(runtime.pendingLockExpireCommand, null);
 });
 
@@ -1487,14 +1487,18 @@ test('BotRuntime honors per-lock autoExecAfterExpire override', () => {
     }
   };
 
-  // false: 本次锁到期不执行
+  // false: 本次锁到期不执行(仍通知未执行)
   runtime.handleLockExpired({ owner: 'owner1', autoExecAfterExpire: false }, 'timer_expire');
-  assert.deepEqual(chats, []);
+  assert.deepEqual(chats, ['/minecraft:w owner1 锁已到期，预设命令未执行']);
   assert.equal(runtime.pendingLockExpireCommand, null);
 
   // true: 执行
   runtime.handleLockExpired({ owner: 'owner1', autoExecAfterExpire: true }, 'timer_expire');
-  assert.deepEqual(chats, ['/home']);
+  assert.deepEqual(chats, [
+    '/minecraft:w owner1 锁已到期，预设命令未执行',
+    '/home',
+    '/minecraft:w owner1 锁已到期，预设命令已执行: /home'
+  ]);
 });
 
 test('BotRuntime lock autoExecAfterExpire true falls back to /home when global config empty', () => {
@@ -1515,6 +1519,28 @@ test('BotRuntime lock autoExecAfterExpire true falls back to /home when global c
   };
 
   runtime.handleLockExpired({ owner: 'owner1', autoExecAfterExpire: true }, 'timer_expire');
+  assert.deepEqual(chats, ['/home', '/minecraft:w owner1 锁已到期，预设命令已执行: /home']);
+});
+
+test('BotRuntime does not notify CONSOLE panel lock owner on expiry', () => {
+  const chats = [];
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: {
+        ...makeLegacyConfig({ entityHandling: false, terrainHandling: false }),
+        behavior: { lockAfterExpireCommand: '/home' }
+      }
+    }
+  });
+  runtime.state = 'online';
+  runtime.bot = {
+    chat(message) {
+      chats.push(message);
+    }
+  };
+
+  // 面板锁 owner=CONSOLE: 执行预设命令但不再私聊通知(CONSOLE 非游戏内玩家)
+  runtime.handleLockExpired({ owner: 'CONSOLE', source: 'http' }, 'timer_expire');
   assert.deepEqual(chats, ['/home']);
 });
 

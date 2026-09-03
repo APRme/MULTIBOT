@@ -214,16 +214,17 @@ class TeleportFeature {
       return;
     }
 
-    this.denyTeleport(sender, `传送锁定，锁定人=${lockStatus.owner} 原因=${lockStatus.reason}`);
-    if (this.bot) {
-      this.bot.chat(
-        `/minecraft:w ${sender} 已锁定，锁定人: ${lockStatus.owner} 原因: ${lockStatus.reason} 剩余锁定时间: ${lockStatus.remainingText}`
-      );
-    }
-
     if (this.logger) {
       this.logger.info(
         `[TPAHERE] denied by lock sender=${sender} owner=${lockStatus.owner} reason=${lockStatus.reason}`
+      );
+    }
+
+    if (this.bot) {
+      // 明确拒绝该发送者的 tpahere(带名), 并私聊说明原因
+      this.bot.chat(`/tpdeny ${sender}`);
+      this.bot.chat(
+        `/minecraft:w ${sender} 已锁定，锁定人: ${lockStatus.owner} 原因: ${lockStatus.reason} 剩余锁定时间: ${lockStatus.remainingText}`
       );
     }
   }
