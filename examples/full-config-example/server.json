@@ -7,7 +7,8 @@
     "enabled": true,
     "requestTimeoutMs": 4500
   },
-  "viewDistance": "tiny",
+  "viewDistance": 2,
+  "chunkBatchReplyChunksPerTick": 0.01,
   "disableChatSigning": true,
   "checkTimeoutInterval": 30000,
   "restartOnDisconnect": true,

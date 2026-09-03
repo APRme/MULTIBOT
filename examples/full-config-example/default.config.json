@@ -24,11 +24,13 @@
     "physicsStandby": true,
     "enableSpawnActions": false,
     "whitelistReloadMinutes": 30,
-    "enableResourcePack": true
+    "enableResourcePack": true,
+    "lockAfterExpireCommand": "/home"
   },
   "capabilities": {
     "entityHandling": true,
-    "terrainHandling": true
+    "terrainHandling": true,
+    "inventoryHandling": true
   },
   "display": {
     "consoleUseAnsi": false

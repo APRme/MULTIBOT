@@ -8,7 +8,7 @@
   "version": "1.21.11",
   "username": "ExampleBot",
   "email": "example-bot@outlook.com",
-  "viewDistance": "tiny",
+  "viewDistance": 2,
   "disableChatSigning": true,
   "checkTimeoutInterval": 30000,
   "restartOnDisconnect": true,
@@ -35,11 +35,13 @@
   "behavior": {
     "enableSpawnActions": false,
     "whitelistReloadMinutes": 30,
-    "enableResourcePack": true
+    "enableResourcePack": true,
+    "lockAfterExpireCommand": "/home"
   },
   "capabilities": {
     "entityHandling": true,
-    "terrainHandling": true
+    "terrainHandling": true,
+    "inventoryHandling": true
   },
   "display": {
     "consoleUseAnsi": false

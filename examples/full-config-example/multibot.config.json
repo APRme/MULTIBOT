@@ -43,7 +43,8 @@
   "defaults": {
     "auth": "microsoft",
     "version": "1.21.11",
-    "viewDistance": "tiny",
+    "viewDistance": 2,
+    "chunkBatchReplyChunksPerTick": 0.01,
     "disableChatSigning": true,
     "checkTimeoutInterval": 30000,
     "autoStart": false,
