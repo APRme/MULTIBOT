@@ -79,6 +79,7 @@ test('loadMasterConfig resolves MULTIBOT sessions dir', () => {
   });
   assert.deepEqual(masterConfig.diagnostics, {
     cpuProfileOnExit: false,
+    configurationPacketLog: false,
     memoryLogger: {
       enabled: false,
       intervalMs: 10000,
@@ -587,6 +588,7 @@ test('loadMasterConfig normalizes temporary memory logger settings', () => {
 
   assert.deepEqual(masterConfig.diagnostics, {
     cpuProfileOnExit: false,
+    configurationPacketLog: false,
     memoryLogger: {
       enabled: true,
       intervalMs: 15000,

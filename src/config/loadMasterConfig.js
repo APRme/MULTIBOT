@@ -314,6 +314,7 @@ function normalizeDiagnosticsConfig(rawConfig) {
 
   return {
     cpuProfileOnExit: source.cpuProfileOnExit === true,
+    configurationPacketLog: source.configurationPacketLog === true,
     memoryLogger: {
       enabled: memoryLoggerSource.enabled === true,
       intervalMs: normalizePositiveInteger(memoryLoggerSource.intervalMs, 10000),

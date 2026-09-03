@@ -757,11 +757,11 @@ class BotRuntime {
     };
 
     if (this.isLightweightMode()) {
-      // 只加载 chat/game/health/settings 插件：不处理区块/实体/物理（MCC 式轻量挂机）
-      // health: 仅依赖 update_health 协议包（血量/饱食度）；settings: 登录时发送 client_information，
-      // 部分服务器在 configuration 阶段等待该包才允许进入 play
+      // 只加载 chat/game/health/settings/resource_pack 插件：不处理区块/实体/物理（MCC 式轻量挂机）
+      // health: 血量/饱食度（update_health）；settings: client_information；
+      // resource_pack: 服务器配置资源包时需回应 add_resource_pack，否则卡在 configuration 阶段
       options.loadInternalPlugins = false;
-      options.plugins = { chat: true, game: true, health: true, settings: true };
+      options.plugins = { chat: true, game: true, health: true, settings: true, resource_pack: true };
     }
 
     if (this.isOpenAuthEnabled()) {
@@ -1378,7 +1378,9 @@ class BotRuntime {
             };
           }
         });
-        // 临时诊断：打印 configuration 阶段收到的包，用于定位云端卡 configuration 的原因
+      }
+      // 诊断：打印 configuration 阶段收到的包名（diagnostics.configurationPacketLog 开启时）
+      if (this.diagnosticsConfig?.configurationPacketLog === true && bot._client) {
         this.addRuntimeListener(bot._client, 'packet', (data, meta) => {
           if (bot._client.state === 'configuration' && meta && meta.name) {
             this.logger.info(`[CFG-DEBUG] ${meta.name}`);
