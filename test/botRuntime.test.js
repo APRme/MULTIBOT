@@ -1544,6 +1544,31 @@ test('BotRuntime does not notify CONSOLE panel lock owner on expiry', () => {
   assert.deepEqual(chats, ['/home']);
 });
 
+test('BotRuntime getWindowSnapshot falls back to lightweight inventory window0', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const slots = Array.from({ length: 46 }, () => null);
+  runtime.bot = {
+    inventory: {
+      id: 0,
+      type: 'minecraft:inventory',
+      inventoryStart: 9,
+      inventoryEnd: 45,
+      slots
+    }
+  };
+
+  const snapshot = runtime.getWindowSnapshot();
+  assert.ok(snapshot, 'snapshot returned');
+  assert.equal(snapshot.name, 'inventory');
+  assert.equal(snapshot.supported, true);
+  assert.equal(snapshot.id, 0);
+  assert.deepEqual(snapshot.slots, []);
+});
+
 test('BotRuntime attachChunkBatchReply replies minimum rate on chunk_batch_finished', () => {
   const runtime = createRuntime({
     config: {

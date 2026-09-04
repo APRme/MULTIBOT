@@ -1759,11 +1759,20 @@ class BotRuntime {
   }
 
   getWindowSnapshot() {
-    if (!this.windowFeature || typeof this.windowFeature.getCurrentSnapshot !== 'function') {
-      return null;
+    if (this.windowFeature && typeof this.windowFeature.getCurrentSnapshot === 'function') {
+      const snapshot = this.windowFeature.getCurrentSnapshot();
+      if (snapshot) {
+        return snapshot;
+      }
     }
 
-    return this.windowFeature.getCurrentSnapshot();
+    // 轻量模式(无 windowFeature/无容器): 回退到自身背包(window0)快照, 供面板物品栏展示
+    if (this.bot && this.bot.inventory) {
+      const { buildWindowSnapshot } = require('../features/window/WindowSnapshot');
+      return buildWindowSnapshot(this.bot.inventory);
+    }
+
+    return null;
   }
 
   async closeWindow() {
