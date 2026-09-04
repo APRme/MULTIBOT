@@ -1,4 +1,6 @@
 const net = require('net');
+const fs = require('fs');
+const path = require('path');
 const mineflayer = require('mineflayer');
 const { CommandContext } = require('../command/CommandContext');
 const { CommandDispatcher } = require('../command/CommandDispatcher');
@@ -34,6 +36,7 @@ const { CplaceFeature } = require('../features/cplace/CplaceFeature');
 const { EatFeature } = require('../features/eat/EatFeature');
 const { WindowFeature } = require('../features/window/WindowFeature');
 const { isIgnorableMalformedNbtArrayError } = require('../legacy/assn/protocol-guard-hotfix');
+const { getTimestamp } = require('../util/time');
 
 const OPEN_AUTH_REQUEST_WATCHDOG_MS = 10000;
 
@@ -391,6 +394,8 @@ class BotRuntime {
     this.pingTimer = null;
     this.pingResolve = null;
     this.lastKnownPosition = null;
+    this.decompressorErrorGuarded = new WeakSet();
+    this.protocolErrorLogPath = null; // 为空时默认 <cwd>/logs/protocol-errors.log
     this.diagnostics = {
       connectionCount: 0,
       currentConnectionStartedAt: null,
@@ -1131,6 +1136,67 @@ class BotRuntime {
   // 轻量模式(bot 不加载区块)下: 服务器按客户端回报速率(chunk_batch_received)推送区块,
   // 收到 chunk_batch_finished 即回最低速率(chunkBatchReplyChunksPerTick, 服务端下限 0.01 区块/tick),
   // 让服务器尽量少推区块/相关实体数据。配置为 0 或缺失有效值时跳过(不回包)。
+  // minecraft-protocol 解压流(compression.js)的 error 没有默认监听, 一旦 zlib 头校验失败/
+  // varint 读空会直接 uncaughtException 拖垮整个进程。这里在 decompressor 上挂 error 监听:
+  // 记日志 + 落盘 protocol-errors.log + 仅断开该 bot 走正常重连。
+  ensureDecompressorErrorGuard(bot) {
+    const client = bot && bot._client;
+    if (!client || typeof client.on !== 'function') {
+      return;
+    }
+
+    const guard = (decompressor) => {
+      if (!decompressor || typeof decompressor.on !== 'function' || this.decompressorErrorGuarded.has(decompressor)) {
+        return;
+      }
+      this.decompressorErrorGuarded.add(decompressor);
+      this.addRuntimeListener(decompressor, 'error', (error) => this.handleDecompressorError(bot, error));
+    };
+
+    guard(client.decompressor);
+
+    // 压缩阈值在登录阶段(收 set_compression)后才创建 decompressor, state 切换后补挂
+    this.addRuntimeListener(client, 'state', () => {
+      setImmediate(() => {
+        if (client.decompressor) {
+          guard(client.decompressor);
+        }
+      });
+    });
+  }
+
+  handleDecompressorError(bot, error) {
+    const errorCode = error && typeof error.code === 'string'
+      ? error.code
+      : (error && error.errno !== undefined ? `errno=${error.errno}` : 'unknown');
+    const message = error && error.message ? error.message : String(error);
+    const line = `${getTimestamp()} [${this.config.id}] decompressor error code=${errorCode} message=${message}`;
+
+    this.logger.error('[PROTOCOL] decompressor error', message, `code=${errorCode}`);
+    this.appendProtocolErrorLog(line);
+
+    // 协议流已损坏, 继续收数据只会连环错: 仅终止本连接, 由断线重连策略拉起, 不影响其他 bot
+    try {
+      if (this.bot && typeof this.bot.quit === 'function') {
+        this.bot.quit('protocol_decompressor_error');
+      } else if (bot && bot._client && typeof bot._client.end === 'function') {
+        bot._client.end('protocol_decompressor_error');
+      }
+    } catch (closeError) {
+      this.logger.warn('[PROTOCOL] failed to close broken connection', closeError && closeError.message);
+    }
+  }
+
+  appendProtocolErrorLog(line) {
+    const filePath = this.protocolErrorLogPath || path.join(process.cwd(), 'logs', 'protocol-errors.log');
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.appendFileSync(filePath, `${line}\n`, 'utf8');
+    } catch (error) {
+      // 落盘失败不影响主流程
+    }
+  }
+
   attachChunkBatchReply(bot) {
     const client = bot && bot._client;
     if (!client || typeof client.on !== 'function' || typeof client.write !== 'function') {
@@ -1529,6 +1595,10 @@ class BotRuntime {
           }
         });
       }
+
+      // 解压流(zlib/varint)错误在 minecraft-protocol 无监听会直接 uncaught 崩进程:
+      // 接住 -> 记日志+落盘 -> 仅断开该 bot 重连
+      this.ensureDecompressorErrorGuard(bot);
 
       this.addRuntimeListener(bot._client, 'disconnect', (packet) => {
         if (epoch !== this.connectionEpoch) {

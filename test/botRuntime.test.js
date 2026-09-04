@@ -1569,6 +1569,72 @@ test('BotRuntime getWindowSnapshot falls back to lightweight inventory window0',
   assert.deepEqual(snapshot.slots, []);
 });
 
+test('BotRuntime decompressor error is caught, logged, persisted and closes only that bot', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-decompressor-'));
+  const errorLogPath = path.join(tempDir, 'protocol-errors.log');
+  const runtime = createRuntime();
+  runtime.protocolErrorLogPath = errorLogPath;
+
+  const quitReasons = [];
+  const decompressor = new EventEmitter();
+  const client = new EventEmitter();
+  client.decompressor = decompressor;
+  client.end = (reason) => quitReasons.push(['client.end', reason]);
+  runtime.bot = {
+    _client: client,
+    quit(reason) {
+      quitReasons.push(['bot.quit', reason]);
+    }
+  };
+
+  runtime.ensureDecompressorErrorGuard({ _client: client });
+  decompressor.emit('error', { code: 'Z_DATA_ERROR', errno: -3, message: 'incorrect header check' });
+
+  assert.deepEqual(quitReasons, [['bot.quit', 'protocol_decompressor_error']]);
+  assert.ok(runtime.logger.getRecent().some((entry) => {
+    return entry.level === 'error' && entry.message.includes('decompressor error');
+  }));
+  assert.ok(fs.existsSync(errorLogPath), 'protocol-errors.log persisted');
+  const content = fs.readFileSync(errorLogPath, 'utf8');
+  assert.match(content, /decompressor error code=Z_DATA_ERROR message=incorrect header check/);
+  runtime.detachRuntimeListeners();
+});
+
+test('BotRuntime decompressor guard attaches after state change and is idempotent', async () => {
+  const runtime = createRuntime();
+  const quitReasons = [];
+  const client = new EventEmitter();
+  client.decompressor = null;
+  client.end = () => {};
+  runtime.bot = {
+    _client: client,
+    quit(reason) {
+      quitReasons.push(reason);
+    }
+  };
+
+  runtime.ensureDecompressorErrorGuard({ _client: client });
+
+  // 初始无 decompressor, state 切换后补挂
+  client.emit('state', 'login', 'handshaking');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(quitReasons.length, 0);
+
+  const decompressor = new EventEmitter();
+  client.decompressor = decompressor;
+  client.emit('state', 'play', 'login');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  decompressor.emit('error', new Error('boom'));
+  assert.deepEqual(quitReasons, ['protocol_decompressor_error']);
+
+  // 幂等: 再次调用不重复挂监听
+  runtime.ensureDecompressorErrorGuard({ _client: client });
+  decompressor.emit('error', new Error('boom again'));
+  assert.deepEqual(quitReasons, ['protocol_decompressor_error', 'protocol_decompressor_error']);
+  runtime.detachRuntimeListeners();
+});
+
 test('BotRuntime attachChunkBatchReply replies minimum rate on chunk_batch_finished', () => {
   const runtime = createRuntime({
     config: {
