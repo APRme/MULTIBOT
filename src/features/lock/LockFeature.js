@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { formatDuration } = require('../../util/time');
+const { formatDuration, getTimestamp } = require('../../util/time');
 
 class LockFeature {
   constructor(options = {}) {
@@ -77,7 +77,7 @@ class LockFeature {
       lockId: lock.lockId,
       owner: lock.owner,
       actor: lock.owner,
-      timestamp: new Date().toISOString(),
+      timestamp: getTimestamp(),
       reason,
       version: 1
     });
@@ -115,7 +115,7 @@ class LockFeature {
       lockId: lock.lockId,
       owner: lock.owner,
       actor,
-      timestamp: new Date().toISOString(),
+      timestamp: getTimestamp(),
       reason,
       version: 1
     });
@@ -371,8 +371,8 @@ class LockFeature {
     // 面板/HTTP 来源的锁 owner 统一标识为 CONSOLE(控制台), 与游戏内玩家锁区分展示
     const isPanelSource = context.source === 'http' || context.source === 'console';
     const owner = isPanelSource ? 'CONSOLE' : context.sender;
-    const createdAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + durationMs).toISOString();
+    const createdAt = getTimestamp();
+    const expiresAt = getTimestamp(new Date(Date.now() + durationMs));
     const lock = {
       lockId: `${Date.now()}-${String(owner).toLowerCase()}`,
       owner,
