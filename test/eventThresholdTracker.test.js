@@ -33,3 +33,35 @@ test('EventThresholdTracker reset clears recorded timestamps', () => {
   tracker.reset();
   assert.equal(tracker.getCount(), 0);
 });
+
+test('EventThresholdTracker keeps memory bounded under high request volume', () => {
+  const tracker = new EventThresholdTracker({ threshold: 10, windowMs: 600000 });
+
+  for (let i = 0; i < 20000; i += 1) {
+    tracker.record(1000000 + i);
+  }
+
+  assert.equal(tracker.samples.length, 20, '样本数被 maxSamples(=threshold*2) 限制');
+  assert.equal(tracker.getCount(1002000), 20000, '计数仍然准确(O(1) 内存)');
+});
+
+test('EventThresholdTracker honours an explicit maxSamples', () => {
+  const tracker = new EventThresholdTracker({ threshold: 2, windowMs: 600000, maxSamples: 3 });
+  for (let i = 0; i < 100; i += 1) {
+    tracker.record(1000000 + i);
+  }
+  assert.equal(tracker.samples.length, 3);
+  assert.equal(tracker.getCount(1000100), 100);
+});
+
+test('EventThresholdTracker starts a fresh window once the window elapses', () => {
+  const tracker = new EventThresholdTracker({ threshold: 3, windowMs: 60000 });
+
+  tracker.record(1000);
+  tracker.record(2000);
+  assert.equal(tracker.getCount(2000), 2);
+
+  assert.equal(tracker.getCount(61000), 0, '窗口到期后计数归零');
+  assert.deepEqual(tracker.record(61001), { count: 1, exceeded: false });
+  assert.equal(tracker.record(62000).count, 2);
+});

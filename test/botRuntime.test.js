@@ -2088,6 +2088,17 @@ test('BotRuntime pushes critical notification on refresh token invalidation', ()
   assert.match(runtime.lastError, /invalid_grant/);
 });
 
+test('BotRuntime does not treat a transient token refresh failure as invalid credentials', () => {
+  const notifier = createEventNotifierStub();
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  // 裸 "refresh token" 太宽: 临时的刷新网络失败不该报"凭据已失效, 需要人工重新登录"
+  runtime.handleError(new Error('Failed to refresh token: network error while contacting login server'));
+  runtime.handleError(new Error('socket hang up during token refresh'));
+
+  assert.equal(notifier.events.length, 0);
+});
+
 test('BotRuntime pushes critical notification when the account is rejected or banned', () => {
   const notifier = createEventNotifierStub();
   const runtime = createRuntime({ barkNotifier: notifier });
@@ -2100,20 +2111,51 @@ test('BotRuntime pushes critical notification when the account is rejected or ba
   assert.equal(notifier.events[0].severity, 'critical');
 });
 
-test('BotRuntime invalid_session retries only notify after the configured threshold', () => {
-  const notifier = createEventNotifierStub({ eventConfig: { threshold: 3 } });
+test('BotRuntime invalid_session failures notify after the configured threshold', () => {
+  const notifier = createEventNotifierStub({ eventConfig: { threshold: 3, windowMs: 3600000 } });
   const runtime = createRuntime({ barkNotifier: notifier });
 
   runtime.trackInvalidSessionRetry();
   runtime.trackInvalidSessionRetry();
   assert.equal(notifier.events.length, 0, '前两次属于正常自愈, 不打扰');
 
-  runtime.trackInvalidSessionRetry();
-  assert.equal(runtime.invalidSessionRetryCount, 3);
+  assert.equal(runtime.trackInvalidSessionRetry(), 3);
   assert.equal(notifier.events.length, 1);
   assert.equal(notifier.events[0].type, 'invalidSession');
   assert.equal(notifier.events[0].key, 'auth:invalid-session:alpha');
-  assert.match(notifier.events[0].body, /连续失效 3 次/);
+  assert.equal(notifier.events[0].severity, 'critical');
+  assert.match(notifier.events[0].body, /60 分钟内登录会话失效 3 次/);
+});
+
+test('BotRuntime keeps counting invalid_session failures across restarts and ready cycles', () => {
+  // 回归(评审指出): 以前复位写在 handleBotReady 里, 而每次失效后都会重启,
+  // 登录成功即 ready -> 计数被清零 -> 阈值永远到不了(功能形同失效)。
+  const notifier = createEventNotifierStub({ eventConfig: { threshold: 3, windowMs: 3600000 } });
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  for (let cycle = 1; cycle <= 3; cycle += 1) {
+    assert.equal(runtime.trackInvalidSessionRetry(), cycle, `第 ${cycle} 次失效应累计到 ${cycle}`);
+    runtime.state = 'starting';
+    runtime.handleBotReady();
+    assert.equal(runtime.state, 'online', '每轮都应成功上线');
+  }
+
+  assert.equal(notifier.events.length, 1, '跨"失效->重启->上线"循环后, 第 3 次仍应报警');
+  assert.match(notifier.events[0].body, /失效 3 次/);
+});
+
+test('BotRuntime invalid_session counter resets after the configured window', () => {
+  const notifier = createEventNotifierStub({ eventConfig: { threshold: 3, windowMs: 60000 } });
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  runtime.trackInvalidSessionRetry();
+  runtime.trackInvalidSessionRetry();
+
+  // 把窗口起点推回过去, 等价于"那两次失效发生在 2 分钟前"
+  runtime.invalidSessionTracker.windowStartedAt -= 120000;
+
+  assert.equal(runtime.trackInvalidSessionRetry(), 1, '窗口过期后重新计数');
+  assert.equal(notifier.events.length, 0);
 });
 
 test('BotRuntime still uses the dedicated 403 push instead of the event layer', async () => {

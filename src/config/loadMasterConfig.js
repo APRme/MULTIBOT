@@ -378,7 +378,7 @@ const NOTIFICATION_EVENT_SPECS = {
   deviceCode: { cooldownMs: 600000 },
   openAuthPermanentFailure: { cooldownMs: 600000 },
   refreshTokenInvalid: { cooldownMs: 600000 },
-  invalidSession: { threshold: 3, cooldownMs: 1800000 },
+  invalidSession: { threshold: 3, windowMs: 3600000, cooldownMs: 1800000 },
   authRejected: { cooldownMs: 600000 },
   serverAllOffline: { offlineMs: 120000, minBots: 2, cooldownMs: 1800000 },
   restartExhausted: { cooldownMs: 600000 },
@@ -393,7 +393,8 @@ function normalizeNotificationEvents(rawConfig) {
   const events = {
     enabled: source.enabled !== false,
     maxPerHour: normalizePositiveInteger(source.maxPerHour, 6),
-    maxEventStates: normalizePositiveInteger(source.maxEventStates, 2000)
+    maxEventStates: normalizePositiveInteger(source.maxEventStates, 2000),
+    checkIntervalMs: normalizePositiveInteger(source.checkIntervalMs, 60000)
   };
 
   Object.keys(NOTIFICATION_EVENT_SPECS).forEach((type) => {

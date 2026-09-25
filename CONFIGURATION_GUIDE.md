@@ -356,6 +356,96 @@ node .\console-connector.js --bot-id example_bot --api-base http://127.0.0.1:180
 - 环境变量读取 `token`
 - 本地连接器配置文件
 
+### 2.9 `notifications`
+
+这个配置块写在 `multibot.config.json` 顶层，用来开关“关键事件推送到手机（Bark）”。默认**关闭**，不配置就完全不推送。
+
+```json
+{
+  "notifications": {
+    "bark": {
+      "enabled": false,
+      "scriptPath": "./src/notifications/bark/bark-push.ps1",
+      "envPath": "./.env",
+      "group": "mc",
+      "logPath": "./logs/bark.log",
+      "cooldownMs": 600000,
+      "timeoutMs": 25000,
+      "retryOnce": true
+    },
+    "events": {
+      "enabled": true,
+      "maxPerHour": 6,
+      "maxEventStates": 2000,
+      "checkIntervalMs": 60000
+    }
+  }
+}
+```
+
+#### 2.9.1 `bark`：推送通道
+
+| 字段 | 类型 | 代码默认 | 说明 |
+| --- | --- | --- | --- |
+| `bark.enabled` | boolean | `false` | 总开关，必须显式设为 `true` 才会推送 |
+| `bark.scriptPath` | string | `./src/notifications/bark/bark-push.ps1` | 推送脚本，相对路径按项目根解析 |
+| `bark.envPath` | string | `./.env` | 存放 Bark 地址/凭据/加密密钥的 env 文件；**凭据只由脚本读取，后端进程不解析、不记录** |
+| `bark.group` | string | `mc` | Bark 通知分组名 |
+| `bark.logPath` | string | `./logs/bark.log` | 每次推送尝试的结果流水（成功/失败/被抑制） |
+| `bark.cooldownMs` | integer | `600000` | 403 自愈专用推送的同 bot 冷却 |
+| `bark.timeoutMs` | integer | `25000` | 外层等待脚本结束的超时，超时按 `wrapper-timeout` 记失败 |
+| `bark.retryOnce` | boolean | `false` | 首次失败后等待 2 秒重发一次（共 2 次尝试） |
+
+说明：
+
+- `.env` 里需要的键由 `bark-push.ps1` 头部注释说明（地址、Basic 认证、device key、可选 AES 密钥）
+- `.ps1` 必须是 **UTF-8 with BOM**，Windows PowerShell 5.1 才能正确解析其中的中文
+- 推送内容不含任何凭据；失败只记录**脱敏分类**（`timeout` / `dns-fail` / `tls-fail` / `http-4xx` / `env-missing` …）
+
+#### 2.9.2 `events`：事件告警
+
+`events.enabled` 是事件层总开关（缺省开）。`maxPerHour` 限制每小时真正发出的条数，超出部分会被折叠计数，并在下一次实际推送的正文里带上“折叠 N 次”。`maxEventStates` 是去重状态表的容量上限（防止高基数事件把内存撑大），`checkIntervalMs` 是巡检器（服务器全员离线 / bot 卡死 / 日志过大）的检查周期，最小 `10000`。
+
+每个事件都可以单独开关并覆盖阈值：
+
+```json
+{
+  "notifications": {
+    "events": {
+      "enabled": true,
+      "maxPerHour": 6,
+      "maxEventStates": 2000,
+      "checkIntervalMs": 60000,
+      "botStuck": { "enabled": true, "stuckMs": 1800000, "cooldownMs": 1800000 },
+      "deviceCode": { "enabled": false }
+    }
+  }
+}
+```
+
+| 事件键 | 触发条件 | 级别 | 默认阈值 |
+| --- | --- | --- | --- |
+| `uncaughtException` | 进程内未捕获异常（未退出）累计 | active | `threshold` 3 次 / `windowMs` 1 小时 |
+| `deviceCode` | 需要设备码人工登录（Microsoft） | critical | 冷却 10 分钟 |
+| `openAuthPermanentFailure` | OpenAuth 永久失败并停止重连 | critical | 冷却 10 分钟 |
+| `refreshTokenInvalid` | refresh token 失效（`invalid_grant` / AADSTS / 明确的过期、吊销文案） | critical | 冷却 10 分钟 |
+| `invalidSession` | 会话失效计数（跨“失效→重启→上线”循环累计，不因中间上线而清零） | critical | `threshold` 3 次 / `windowMs` 1 小时 |
+| `authRejected` | 账号被认证服务拒绝/封禁 | critical | 冷却 10 分钟 |
+| `serverAllOffline` | 同一 `host:port` 下期望运行的 bot 全部离线 | critical | 持续 `offlineMs` 2 分钟；`minBots` 2 |
+| `restartExhausted` | 自动重连次数用尽，已停止重连 | critical | 冷却 10 分钟 |
+| `botStuck` | 期望运行但非在线，且距最近活动超过阈值 | critical | `stuckMs` 30 分钟 |
+| `logFileTooLarge` | `logs/` 下单文件超过阈值 | active | `maxBytes` 1GB；每 `checkIntervalMs` 1 小时扫一次 |
+| `apiAuthFailure` | 同一来源的 API 认证失败次数 | critical | `threshold` 10 次 / `windowMs` 10 分钟 |
+| `pushFailing` | 推送自身连续失败 | active | `threshold` 3 次 |
+
+说明：
+
+- `critical` 对应 Bark 的 `timeSensitive`（可突破专注模式），`active` 对应普通提醒，恢复通知按 `active` 发送
+- 冷却以“上次尝试”计时（而不是上次成功），避免推送持续失败时被反复重试刷屏
+- 恢复通知是**配对**的：只有同一类问题真的推送过，恢复时才补一条（带持续时长），不会凭空发“已恢复”
+- 被冷却/限流压掉的次数会累计；`logs/bark.log` 只在第 1 次与之后每 10 次写一行 `[SKIP]`，避免长时间故障刷大日志
+- 阈值判定占用内存与请求量无关（计数器只保留首个时间戳与计数），公网端口被刷认证失败也不会把内存顶起来
+
 ## 3. 运行时字段一览
 
 这一节的字段可出现在以下位置：

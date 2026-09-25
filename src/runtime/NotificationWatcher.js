@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_CHECK_INTERVAL_MS = 60000;
+const MIN_CHECK_INTERVAL_MS = 10000;
 const DEFAULT_LOG_SCAN_LIMIT = 200;
 
 function toMs(value) {
@@ -30,11 +31,25 @@ class NotificationWatcher {
     this.logger = options.logger || null;
     this.appRoot = options.appRoot || process.cwd();
     this.now = typeof options.now === 'function' ? options.now : () => Date.now();
-    this.checkIntervalMs = toPositiveNumber(options.checkIntervalMs, DEFAULT_CHECK_INTERVAL_MS);
+    // 阈值统一来自 notifier 的 notifications.events 配置(单一来源); 事件层关闭时巡检器也不跑
+    this.checkIntervalMs = Math.max(
+      MIN_CHECK_INTERVAL_MS,
+      toPositiveNumber(options.checkIntervalMs || this.getEventsConfig().checkIntervalMs, DEFAULT_CHECK_INTERVAL_MS)
+    );
     this.tickTimer = null;
     this.serverOfflineSince = new Map();
     this.stuckSince = new Map();
     this.lastLogScanAt = 0;
+  }
+
+  getEventsConfig() {
+    if (this.notifier && typeof this.notifier.getEventsConfig === 'function') {
+      const events = this.notifier.getEventsConfig();
+      if (events && typeof events === 'object') {
+        return events;
+      }
+    }
+    return {};
   }
 
   start() {
@@ -212,7 +227,8 @@ class NotificationWatcher {
       const referenceMs = lastActivityMs > 0 ? lastActivityMs : firstSeenAt;
       if (now - referenceMs < stuckMs) return;
 
-      const stuckMinutes = Math.max(1, Math.round((now - firstSeenAt) / 60000));
+      // 文案与阈值同口径: 报"距最近一次活动"的真实时长, 否则会低估严重程度
+      const stuckMinutes = Math.max(1, Math.round((now - referenceMs) / 60000));
       this.notifyEvent({
         type: 'botStuck',
         key,

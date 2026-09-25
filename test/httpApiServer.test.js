@@ -12,7 +12,8 @@ async function makeRequest(options) {
     token = 'test-token',
     body,
     rawBody,
-    origin
+    origin,
+    extraHeaders
   } = options;
 
   const payload = rawBody !== undefined
@@ -30,7 +31,8 @@ async function makeRequest(options) {
       headers: {
         Authorization: token ? `Bearer ${token}` : '',
         'Content-Type': 'application/json',
-        ...(origin ? { Origin: origin } : {})
+        ...(origin ? { Origin: origin } : {}),
+        ...(extraHeaders || {})
       }
     }, (res) => {
       const chunks = [];
@@ -1022,5 +1024,42 @@ test('HttpApiServer skips auth failure notifications when the event is disabled'
 
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(events.length, 0);
+  });
+});
+
+test('HttpApiServer keeps the real client IP from X-Forwarded-For', async () => {
+  const events = [];
+
+  await withAuthFailureServer(events, { threshold: 1, windowMs: 600000 }, async (port) => {
+    await makeRequest({
+      port,
+      path: '/api/bots',
+      token: 'wrong-token',
+      extraHeaders: { 'X-Forwarded-For': '203.0.113.9, 10.0.0.1' }
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].key, 'api:auth-fail:203.0.113.9');
+    assert.match(events[0].body, /来源 203\.0\.113\.9/);
+  });
+});
+
+test('HttpApiServer sanitizes spoofed X-Forwarded-For before it reaches the alert', async () => {
+  const events = [];
+
+  await withAuthFailureServer(events, { threshold: 1, windowMs: 600000 }, async (port) => {
+    await makeRequest({
+      port,
+      path: '/api/bots',
+      token: 'wrong-token',
+      extraHeaders: { 'X-Forwarded-For': `evil<script>alert(1)</script>${'A'.repeat(300)}` }
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].key, 'api:auth-fail:unknown', '非 IP 字符被清掉后归入 unknown');
+    assert.equal(events[0].body.includes('<'), false);
+    assert.ok(events[0].body.length < 200, '告警正文不会被超长头撑爆');
   });
 });

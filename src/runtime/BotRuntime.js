@@ -36,6 +36,7 @@ const { CplaceFeature } = require('../features/cplace/CplaceFeature');
 const { EatFeature } = require('../features/eat/EatFeature');
 const { WindowFeature } = require('../features/window/WindowFeature');
 const { isIgnorableMalformedNbtArrayError } = require('../legacy/assn/protocol-guard-hotfix');
+const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
 const { getTimestamp } = require('../util/time');
 
 const OPEN_AUTH_REQUEST_WATCHDOG_MS = 10000;
@@ -152,12 +153,31 @@ const BARK_BOT_EVENT_KEY_PREFIXES = [
   'bot:stuck'
 ];
 
-// refresh_token 失效/需要交互登录(prismarine-auth / msal 常见文案) -> 需要人工重新登录
+// refresh_token 失效/需要交互登录(prismarine-auth / msal 常见文案) -> 需要人工重新登录。
+// 注意: 裸 "refresh token" 太宽(临时的刷新网络失败也会带这句), 必须与"永久性"词同时出现才算,
+// 否则会把可自愈的抖动误报成"凭据已失效, 需要人工重新登录"。
 const REFRESH_TOKEN_INVALID_FRAGMENTS = [
   'invalid_grant',
-  'refresh token',
   'aadsts'
 ];
+
+const REFRESH_TOKEN_CONTEXT_FRAGMENTS = ['refresh token'];
+const REFRESH_TOKEN_PERMANENT_FRAGMENTS = [
+  'expired',
+  'invalid',
+  'revoked',
+  'not found',
+  'no longer valid'
+];
+
+function isRefreshTokenInvalidError(lowerMessage) {
+  if (REFRESH_TOKEN_INVALID_FRAGMENTS.some((fragment) => lowerMessage.includes(fragment))) {
+    return true;
+  }
+
+  return REFRESH_TOKEN_CONTEXT_FRAGMENTS.some((fragment) => lowerMessage.includes(fragment))
+    && REFRESH_TOKEN_PERMANENT_FRAGMENTS.some((fragment) => lowerMessage.includes(fragment));
+}
 
 // 账号被拒/被封(认证层) -> 重连无用, 需要人工处理
 const AUTH_REJECTED_FRAGMENTS = [
@@ -384,7 +404,7 @@ class BotRuntime {
     this.openAuthRequestMissingRetryEligible = false;
     this.openAuthPermanentFailure = false;
     this.openAuthRequestWatchdogTimer = null;
-    this.invalidSessionRetryCount = 0;
+    this.invalidSessionTracker = null;
     this.bot = null;
     this.state = 'stopped';
     this.desiredRunning = false;
@@ -648,7 +668,6 @@ class BotRuntime {
     this.spawnCount += 1;
     this.restartAttempt = 0;
     this.restartScheduleExhausted = false;
-    this.invalidSessionRetryCount = 0;
     this.lastSpawnAt = getTimestamp();
     this.logger.info('[BOT] spawn');
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_SPAWN, { detail: this.lastSpawnAt });
@@ -2078,7 +2097,7 @@ class BotRuntime {
     }
 
     // refresh_token 失效 / 需要交互登录: 自动重连解决不了, 必须人工重新登录(只通知, 不改重启行为)
-    if (REFRESH_TOKEN_INVALID_FRAGMENTS.some((fragment) => lower.includes(fragment))) {
+    if (isRefreshTokenInvalidError(lower)) {
       this.notifyBarkEvent({
         type: 'refreshTokenInvalid',
         key: `auth:refresh-token:${this.config.id}`,
@@ -2174,22 +2193,30 @@ class BotRuntime {
     return { enabled: false, cooldownMs: 0 };
   }
 
-  // invalid_session 连续重试计数: 达到阈值才推(单次失败属于正常自愈流程, 不打扰)
+  // invalid_session 失效计数: 用滑动/整窗计数而不是"连续次数"——因为每次失效后都会重启,
+  // 只要登录成功就会走 handleBotReady, 连续计数永远清零, 阈值不可达(评审指出)。
+  // 语义: 窗口内失效 >= threshold 次即报警(抖动本身就是要处理的问题, 不因中间上线而豁免)。
   trackInvalidSessionRetry() {
-    this.invalidSessionRetryCount = (this.invalidSessionRetryCount || 0) + 1;
     const eventConfig = this.getNotificationEventConfig('invalidSession');
     const threshold = Number(eventConfig.threshold) > 0 ? Number(eventConfig.threshold) : 3;
+    const windowMs = Number(eventConfig.windowMs) > 0 ? Number(eventConfig.windowMs) : 3600000;
 
-    if (this.invalidSessionRetryCount >= threshold) {
+    if (!this.invalidSessionTracker) {
+      this.invalidSessionTracker = new EventThresholdTracker({ threshold, windowMs });
+    }
+
+    const { count, exceeded } = this.invalidSessionTracker.record();
+    if (exceeded) {
+      const windowMinutes = Math.max(1, Math.round(windowMs / 60000));
       this.notifyBarkEvent({
         type: 'invalidSession',
         key: `auth:invalid-session:${this.config.id}`,
         severity: 'critical',
-        body: `${this.config.id} 登录会话连续失效 ${this.invalidSessionRetryCount} 次, 需要人工重新登录 @ ${this.config.host}`
+        body: `${this.config.id} ${windowMinutes} 分钟内登录会话失效 ${count} 次, 需要人工重新登录 @ ${this.config.host}`
       });
     }
 
-    return this.invalidSessionRetryCount;
+    return count;
   }
 
   // 403 自愈时推送手机提醒(标题 MULTIBOT Downdetector); 同一 bot 在冷却期内只推一次,

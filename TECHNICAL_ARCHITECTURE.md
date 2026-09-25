@@ -1506,3 +1506,37 @@ OpenAuth 客户端会在有效 `oam:join` 解码并校验后、发起 Mojang Joi
 - 不破坏既有面板协议
 - 连接器拿到的是更适合单 bot 终端的 bootstrap + filtered stream
 - 全局观察流仍然保持现有简单模型
+
+## 23. 通知与告警（Bark）
+
+这一层解决的是“无人值守时，出问题没人知道”。配置入口见配置说明书的 `notifications`（默认关闭）。
+
+### 23.1 组件分工
+
+| 组件 | 职责 |
+| --- | --- |
+| `src/notifications/bark/bark-push.ps1` | 唯一接触凭据的地方：自己读 `.env`、加密、HTTPS 直连，只输出 `[OK/...]` 或 `[FAIL] reason=<分类>`；必须保持 UTF-8 with BOM |
+| `src/notifications/bark/BarkNotifier.js` | 调用脚本、解析脱敏结果、写 `logs/bark.log`、事件层（冷却/折叠/限速/恢复配对/级别映射） |
+| `src/notifications/EventThresholdTracker.js` | 窗口阈值计数：整窗重置 + 计数与样本分离，内存 O(1) |
+| `src/runtime/NotificationWatcher.js` | 巡检器：服务器全员离线、bot 卡死、日志文件过大；只读状态，从不改 bot |
+| `src/util/redact.js` | 推送正文脱敏（去 URL/邮箱/长 token + 截断），只用于异常摘要这类进推送的文本 |
+
+### 23.2 事件来源分两类
+
+- **即时事件**：发生的那一刻就判定，来自 `BotRuntime`（设备码、OpenAuth 永久失败、refresh token 失效、账号被拒、会话失效、重连耗尽）、`MultibotApp`（未捕获异常窗口计数）、`HttpApiServer`（API 认证失败）
+- **巡检事件**：由 `NotificationWatcher` 按 `events.checkIntervalMs` 周期检查（服务器全员离线、bot 卡死、日志过大），随 `BotManager.start()/stop()` 启停
+
+### 23.3 去重与降噪规则
+
+- 每个事件一个 `key`（如 `bot:stuck:APR_m`、`api:auth-fail:<ip>`），冷却以“上次尝试”计时
+- 冷却期内同类事件只累加计数，下一次真正发出时在正文追加“折叠 N 次”
+- 全局 `maxPerHour` 限制真正发出的条数
+- 恢复通知与故障通知配对：同类问题真推送过才会补一条恢复（带持续时长）
+- `logs/bark.log` 记录每次尝试与限频的抑制（`[SKIP]` 只在第 1 次与每 10 次写一行）
+
+### 23.4 已知边界
+
+- 403 自愈推送走的是**专用路径**（`notifyBarkAuth403` + `bark.cooldownMs`），不占用事件层的 `maxPerHour` 配额，`bark.log` 行也不带 `key=`
+- 日志体积巡检只覆盖 `logs/*.log`；服务端聚合日志写在 `BOTS/<serverDir>/`（`assn_chat.log`、`assn_playerList.log`）不在其内
+- 去重状态表在内存中，进程重启即清空；表满时会丢弃“最久未活动”的条目，被丢弃的事件不会再补推恢复通知
+- `X-Forwarded-For` 是客户端可伪造的：只按 IPv4/IPv6 格式校验并截断，非法值统一归入 `unknown`，仅用于告警分组

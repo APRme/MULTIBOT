@@ -16,6 +16,7 @@ function createNotifierStub(options = {}) {
     pending,
     isEnabled: () => options.enabled !== false,
     isEventsEnabled: () => options.eventsEnabled !== false,
+    getEventsConfig: () => Object.assign({}, options.eventsConfig || {}),
     getEventConfig: (type) => Object.assign(
       { enabled: true, cooldownMs: 0 },
       options.overrides && options.overrides[type] ? options.overrides[type] : {}
@@ -180,6 +181,24 @@ test('NotificationWatcher reports a bot stuck without restart activity for 30 mi
   assert.equal(notifier.events[0].severity, 'critical');
   assert.match(notifier.events[0].body, /state=starting/);
   assert.match(notifier.events[0].body, /createBot failed/);
+  assert.match(notifier.events[0].body, /已 60 分钟未上线/, '文案按最近一次活动时间算, 不按首次观察');
+});
+
+test('NotificationWatcher tick interval comes from events config with a 10s floor', () => {
+  const fromConfig = createWatcher({
+    runtimes: [],
+    notifierOptions: { eventsConfig: { checkIntervalMs: 30000 } }
+  });
+  assert.equal(fromConfig.watcher.checkIntervalMs, 30000);
+
+  const floored = createWatcher({
+    runtimes: [],
+    notifierOptions: { eventsConfig: { checkIntervalMs: 1000 } }
+  });
+  assert.equal(floored.watcher.checkIntervalMs, 10000, '过小的值被下限保护');
+
+  const fallback = createWatcher({ runtimes: [] });
+  assert.equal(fallback.watcher.checkIntervalMs, 60000);
 });
 
 test('NotificationWatcher does not report stuck bots that are online, stopped or scheduled', () => {

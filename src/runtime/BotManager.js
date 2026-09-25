@@ -44,7 +44,6 @@ class BotManager {
       botManager: this,
       notifier: this.barkNotifier,
       appRoot: this.masterConfig?.appRoot || process.cwd(),
-      config: this.notificationsConfig?.events || null,
       logger: {
         info: (message) => console.log(`[MULTIBOT][notify] ${message}`),
         warn: (message) => {

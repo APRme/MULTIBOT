@@ -2,6 +2,9 @@ const http = require('http');
 const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
 
 const MAX_TRACKED_AUTH_FAILURE_IPS = 500;
+const MAX_CLIENT_IP_LENGTH = 45;
+const IPV4_PATTERN = /^\d{1,3}(\.\d{1,3}){3}(:\d{1,5})?$/;
+const IPV6_PATTERN = /^[0-9a-fA-F:.]{2,45}$/;
 
 class HttpApiServer {
   constructor(options = {}) {
@@ -77,13 +80,27 @@ class HttpApiServer {
   }
 
   // 取客户端 IP: nginx 反代时 socket.remoteAddress 恒为 127.0.0.1, 优先用 X-Forwarded-For 首段。
+  // 该头是客户端可伪造的, 且会被写进推送正文与去重 key, 因此: 优先按 IPv4(可带端口)/IPv6 校验,
+  // 只保留 IP 字符集并截断长度, 不像 IP 的一律归入 unknown(避免用假值刷出大量不同 key 或撑爆正文)。
   // 仅用于告警分组(不是访问控制), 因此被伪造也只影响分组。
   getClientIp(req) {
     const forwarded = req && req.headers ? req.headers['x-forwarded-for'] : null;
-    if (typeof forwarded === 'string' && forwarded.trim()) {
-      return forwarded.split(',')[0].trim();
+    const raw = typeof forwarded === 'string' && forwarded.trim()
+      ? forwarded.split(',')[0]
+      : ((req && req.socket && req.socket.remoteAddress) || '');
+
+    const cleaned = String(raw)
+      .trim()
+      .slice(0, MAX_CLIENT_IP_LENGTH)
+      .replace(/[^0-9a-fA-F:.]/g, '');
+
+    if (IPV4_PATTERN.test(cleaned)) {
+      return cleaned;
     }
-    return (req && req.socket && req.socket.remoteAddress) || 'unknown';
+    if ((cleaned.match(/:/g) || []).length >= 2 && IPV6_PATTERN.test(cleaned)) {
+      return cleaned;
+    }
+    return 'unknown';
   }
 
   // F1: 同一来源认证失败达到阈值 -> 推送(可能是爆破); 单次失败不打扰
