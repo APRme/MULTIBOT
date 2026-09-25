@@ -304,3 +304,204 @@ test('BarkNotifier retryOnce does not spawn at all when disabled', async () => {
   assert.equal(calls.length, 0);
   assert.equal(readBarkLog(appRoot), '');
 });
+
+function createEventNotifier(config = {}, hooks = {}) {
+  const children = [];
+  const logs = [];
+  const created = createNotifier(Object.assign({ enabled: true, timeoutMs: 5000 }, config), Object.assign({
+    spawnResults: () => {
+      const child = makeFakeChild();
+      children.push(child);
+      return child;
+    }
+  }, hooks));
+  created.notifier.logger = {
+    info: (message) => logs.push(message),
+    warn: (message) => logs.push(message)
+  };
+  created.children = children;
+  created.logs = logs;
+  return created;
+}
+
+function completeAttempt(child, output) {
+  child.stdout.emit('data', output);
+  child.emit('close', 0);
+}
+
+test('BarkNotifier.notifyEvent pushes on first occurrence and records key in bark.log', async () => {
+  const { notifier, children, appRoot } = createEventNotifier({});
+  const pending = notifier.notifyEvent({
+    type: 'restartExhausted',
+    key: 'bot:exhausted:APR_m',
+    severity: 'critical',
+    title: 'MULTIBOT Downdetector',
+    body: 'APR_m 重连耗尽',
+    label: 'APR_m'
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[0], '[OK/https] code=200');
+  const result = await pending;
+
+  assert.equal(result.sent, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.folded, 0);
+
+  assert.match(readBarkLog(appRoot), /\[OK\] label=APR_m elapsed=\d+ms key=bot:exhausted:APR_m/);
+});
+
+test('BarkNotifier.notifyEvent maps severity to Bark level', async () => {
+  const { notifier, calls, children } = createEventNotifier({});
+
+  const critical = notifier.notifyEvent({ type: 'deviceCode', key: 'auth:device-code:alpha', severity: 'critical', body: 'b', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[0], '[OK/https] code=200');
+  await critical;
+  assert.equal(calls[0].args[calls[0].args.indexOf('-Level') + 1], 'timeSensitive');
+
+  const passive = notifier.notifyEvent({ type: 'logFileTooLarge', key: 'disk:log:x', severity: 'passive', body: 'b', label: 'backend' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[1], '[OK/https] code=200');
+  await passive;
+  assert.equal(calls[1].args[calls[1].args.indexOf('-Level') + 1], 'passive');
+});
+
+test('BarkNotifier.notifyEvent folds repeated occurrences during cooldown', async () => {
+  let clock = 1000000;
+  const { notifier, children, calls, appRoot } = createEventNotifier({}, { now: () => clock });
+  notifier.now = () => clock;
+
+  const first = notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[0], '[OK/https] code=200');
+  await first;
+
+  const second = await notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+  assert.equal(second.sent, false);
+  assert.equal(second.reason, 'cooldown');
+  assert.equal(second.suppressed, 1);
+  assert.equal(calls.length, 1);
+
+  clock += 1800000;
+  const third = notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[1], '[OK/https] code=200');
+  const thirdResult = await third;
+
+  assert.equal(thirdResult.sent, true);
+  assert.equal(thirdResult.folded, 1);
+  assert.equal(calls[calls.length - 1].args[calls[calls.length - 1].args.indexOf('-Body') + 1], '卡住（此前 30 分钟内折叠 1 次）');
+  assert.match(readBarkLog(appRoot), /\[SKIP\] key=bot:stuck:alpha type=botStuck reason=cooldown suppressed=1/);
+});
+
+test('BarkNotifier.notifyEvent honors the global hourly rate limit', async () => {
+  let clock = 5000000;
+  const { notifier, children, appRoot } = createEventNotifier({ events: { maxPerHour: 2 } });
+  notifier.now = () => clock;
+
+  for (let i = 0; i < 2; i += 1) {
+    const pending = notifier.notifyEvent({ type: 'authRejected', key: `auth:rejected:bot${i}`, body: 'b', label: `bot${i}` });
+    await new Promise((resolve) => setImmediate(resolve));
+    completeAttempt(children[i], '[OK/https] code=200');
+    const result = await pending;
+    assert.equal(result.sent, true);
+  }
+
+  const limited = await notifier.notifyEvent({ type: 'authRejected', key: 'auth:rejected:bot2', body: 'b', label: 'bot2' });
+  assert.equal(limited.sent, false);
+  assert.equal(limited.reason, 'rate-limit');
+  assert.match(readBarkLog(appRoot), /\[SKIP\] key=auth:rejected:bot2 type=authRejected reason=rate-limit suppressed=1/);
+
+  clock += 3600000;
+  const afterWindow = notifier.notifyEvent({ type: 'authRejected', key: 'auth:rejected:bot3', body: 'b', label: 'bot3' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[2], '[OK/https] code=200');
+  assert.equal((await afterWindow).sent, true);
+});
+
+test('BarkNotifier skips disabled events and disabled event layer', async () => {
+  const disabledEvent = createEventNotifier({ events: { authRejected: { enabled: false } } });
+  const result = await disabledEvent.notifier.notifyEvent({ type: 'authRejected', key: 'k', body: 'b', label: 'alpha' });
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, 'event-disabled');
+  assert.equal(disabledEvent.calls.length, 0);
+
+  const disabledLayer = createEventNotifier({ events: { enabled: false } });
+  const layerResult = await disabledLayer.notifier.notifyEvent({ type: 'authRejected', key: 'k', body: 'b', label: 'alpha' });
+  assert.equal(layerResult.sent, false);
+  assert.equal(layerResult.reason, 'events-disabled');
+});
+
+test('BarkNotifier.notifyEvent supports explicit cooldown override per event config', async () => {
+  let clock = 1000;
+  const { notifier, children } = createEventNotifier({ events: { deviceCode: { cooldownMs: 0 } } });
+  notifier.now = () => clock;
+
+  for (let i = 0; i < 2; i += 1) {
+    const pending = notifier.notifyEvent({ type: 'deviceCode', key: 'auth:device-code:alpha', body: 'b', label: 'alpha' });
+    await new Promise((resolve) => setImmediate(resolve));
+    completeAttempt(children[i], '[OK/https] code=200');
+    const result = await pending;
+    assert.equal(result.sent, true, `attempt ${i + 1} should send with cooldownMs=0`);
+    clock += 1;
+  }
+});
+
+test('BarkNotifier.notifyRecovery only sends after a delivered failure and includes duration', async () => {
+  let clock = 100000;
+  const { notifier, children, calls, appRoot } = createEventNotifier({});
+  notifier.now = () => clock;
+
+  const noPending = await notifier.notifyRecovery({ type: 'botStuck', key: 'bot:stuck:alpha', body: '已恢复', label: 'alpha' });
+  assert.equal(noPending.sent, false);
+  assert.equal(noPending.reason, 'no-pending-failure');
+  assert.equal(calls.length, 0);
+
+  const failure = notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[0], '[OK/https] code=200');
+  await failure;
+
+  clock += 192000;
+  const pending = notifier.notifyRecovery({ type: 'botStuck', key: 'bot:stuck:alpha', body: 'alpha 已恢复上线', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[1], '[OK/https] code=200');
+  const recovery = await pending;
+
+  assert.equal(recovery.sent, true);
+  assert.equal(recovery.durationMs, 192000);
+  assert.equal(calls[1].args[calls[1].args.indexOf('-Body') + 1], 'alpha 已恢复上线（持续 3m 12s）');
+  assert.match(readBarkLog(appRoot), /\[OK\] label=alpha elapsed=\d+ms key=bot:stuck:alpha recovery/);
+
+  const repeat = await notifier.notifyRecovery({ type: 'botStuck', key: 'bot:stuck:alpha', body: '已恢复', label: 'alpha' });
+  assert.equal(repeat.sent, false);
+  assert.equal(repeat.reason, 'no-pending-failure');
+});
+
+test('BarkNotifier records push-failing alert after consecutive failures and recovery push', async () => {
+  const { notifier, children, logs, appRoot } = createEventNotifier({ events: { pushFailing: { threshold: 2 } } });
+
+  for (let i = 0; i < 2; i += 1) {
+    const pending = notifier.notify({ title: 't', body: 'b', label: 'push-failing-probe' });
+    await new Promise((resolve) => setImmediate(resolve));
+    completeAttempt(children[i], '[FAIL] reason=timeout elapsed=20.0s');
+    await pending;
+  }
+
+  assert.equal(notifier.consecutiveFailures, 2);
+  assert.equal(notifier.pushFailingAlerted, true);
+  assert.match(readBarkLog(appRoot), /\[ALERT\] key=push-failing consecutive=2 reason=timeout/);
+  assert.ok(logs.some((message) => message.includes('bark push failing consecutively count=2')));
+
+  const ok = notifier.notify({ title: 't', body: 'b', label: 'push-failing-probe' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[2], '[OK/https] code=200');
+  await ok;
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[3], '[OK/https] code=200');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(notifier.consecutiveFailures, 0);
+  assert.equal(notifier.pushFailingAlerted, false);
+  assert.match(readBarkLog(appRoot), /\[RECOVER\] key=push-failing consecutive=2 restored/);
+});

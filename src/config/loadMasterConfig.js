@@ -371,6 +371,47 @@ function normalizeConsoleConnectorConfig(rawConfig) {
   };
 }
 
+// 通知事件默认阈值/冷却: 每类事件可单独开关, enabled(总开关)缺省为开。
+// 说明见 bark.log: 只有真正发出去的事件才受 cooldownMs 冷却, 冷却期内同类事件被折叠计数。
+const NOTIFICATION_EVENT_SPECS = {
+  uncaughtException: { threshold: 3, windowMs: 3600000, cooldownMs: 1800000 },
+  deviceCode: { cooldownMs: 600000 },
+  openAuthPermanentFailure: { cooldownMs: 600000 },
+  refreshTokenInvalid: { cooldownMs: 600000 },
+  invalidSession: { threshold: 3, cooldownMs: 1800000 },
+  authRejected: { cooldownMs: 600000 },
+  serverAllOffline: { offlineMs: 120000, minBots: 2, cooldownMs: 1800000 },
+  restartExhausted: { cooldownMs: 600000 },
+  botStuck: { stuckMs: 1800000, cooldownMs: 1800000 },
+  logFileTooLarge: { maxBytes: 1073741824, checkIntervalMs: 3600000, cooldownMs: 21600000 },
+  apiAuthFailure: { threshold: 10, windowMs: 600000, cooldownMs: 1800000 },
+  pushFailing: { threshold: 3, cooldownMs: 1800000 }
+};
+
+function normalizeNotificationEvents(rawConfig) {
+  const source = isPlainObject(rawConfig) ? rawConfig : {};
+  const events = {
+    enabled: source.enabled !== false,
+    maxPerHour: normalizePositiveInteger(source.maxPerHour, 6)
+  };
+
+  Object.keys(NOTIFICATION_EVENT_SPECS).forEach((type) => {
+    const spec = NOTIFICATION_EVENT_SPECS[type];
+    const raw = isPlainObject(source[type]) ? source[type] : {};
+    const normalized = { enabled: raw.enabled !== false };
+
+    Object.keys(spec).forEach((field) => {
+      normalized[field] = field === 'cooldownMs'
+        ? normalizeNonNegativeInteger(raw[field], spec[field])
+        : normalizePositiveInteger(raw[field], spec[field]);
+    });
+
+    events[type] = normalized;
+  });
+
+  return events;
+}
+
 // 通知(目前仅 Bark 推送): 默认关闭; 关键错误(如 prismarine-auth 登录 403)触发手机推送
 function normalizeNotificationsConfig(rawConfig) {
   const source = isPlainObject(rawConfig) ? rawConfig : {};
@@ -394,7 +435,8 @@ function normalizeNotificationsConfig(rawConfig) {
       cooldownMs: normalizeNonNegativeInteger(bark.cooldownMs, 600000),
       timeoutMs: normalizePositiveInteger(bark.timeoutMs, 25000),
       retryOnce: bark.retryOnce === true
-    }
+    },
+    events: normalizeNotificationEvents(source.events)
   };
 }
 
@@ -742,6 +784,8 @@ module.exports = {
   normalizeAggregateLoggingConfig,
   normalizeConsoleConnectorConfig,
   normalizeNotificationsConfig,
+  normalizeNotificationEvents,
+  NOTIFICATION_EVENT_SPECS,
   normalizeAllowedOrigins,
   normalizeTeleportPromptMatchers,
   normalizeOpenAuthConfig,

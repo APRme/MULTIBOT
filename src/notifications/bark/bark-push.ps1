@@ -32,6 +32,9 @@ param(
   [string]$Body  = '',
   [string]$Group = 'default',
   [string]$Sound,
+  # 通知级别(决定 Bark 的打扰程度): critical/timeSensitive 会突破专注模式, active 一般, passive 静默
+  [ValidateSet('active','timeSensitive','passive','critical')]
+  [string]$Level = 'timeSensitive',
   [string]$EnvPath,
   [switch]$Sweep,
   [switch]$DryRun,
@@ -172,7 +175,7 @@ function Send-Bark {
   # 明文载荷：加密时整段进密文；不加密时直接作为请求体。
   # 注意 level/group/sound 必须放密文里 —— App 的 ciphertext 处理器最先执行，
   # 且会把 userInfo 整个替换成解密后的 map，放在外面的字段会被丢掉。
-  $inner = [ordered]@{ title = $T; body = $B; group = $G; level = 'timeSensitive' }
+  $inner = [ordered]@{ title = $T; body = $B; group = $G; level = $Level }
   if ($S) { $inner['sound'] = $S }
   $plainJson = $inner | ConvertTo-Json -Compress
 
@@ -189,7 +192,7 @@ function Send-Bark {
       title      = $T
       body       = $B
       group      = $G
-      level      = 'timeSensitive'
+      level      = $Level
     }
     if ($S) { $payload['sound'] = $S }
   }
@@ -199,7 +202,7 @@ function Send-Bark {
     # 注意：URL 里的路径前缀和 device_key 都是秘密，输出前都要打码
     $maskedUrl = $cfg.BARK_URL -replace '/[^/]+/?$', '/<PREFIX>'
     Write-Host "[DryRun] POST $maskedUrl/push"
-    Write-Host "[DryRun] sound=$tag  crypto=$CryptoLabel"
+    Write-Host "[DryRun] sound=$tag  crypto=$CryptoLabel  level=$Level"
     Write-Host "[DryRun] $($json.Replace($cfg.BARK_DEVICE_KEY, '<DEVICE_KEY>'))"
     if ($CryptoEnabled) {
       if ($ShowPlain) { Write-Host "[DryRun] 明文(仅本地): $plainJson" }

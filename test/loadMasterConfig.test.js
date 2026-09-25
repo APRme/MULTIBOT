@@ -9,8 +9,11 @@ const {
   normalizeOpenAuthConfig,
   normalizeChunkBatchReplyChunksPerTick,
   normalizeNotificationsConfig,
+  normalizeNotificationEvents,
+  NOTIFICATION_EVENT_SPECS,
   buildDiscoveredBotConfig
 } = require('../src/config/loadMasterConfig');
+const { EVENT_COOLDOWN_DEFAULTS } = require('../src/notifications/bark/BarkNotifier');
 
 test('loadMasterConfig resolves MULTIBOT sessions dir', () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-legacy-repo-'));
@@ -1327,5 +1330,52 @@ test('normalizeNotificationsConfig only enables retryOnce for a strict boolean t
   assert.equal(normalizeNotificationsConfig({ bark: { retryOnce: 'yes' } }).bark.retryOnce, false);
   assert.equal(normalizeNotificationsConfig({ bark: { retryOnce: 1 } }).bark.retryOnce, false);
   assert.equal(normalizeNotificationsConfig({ bark: { retryOnce: true } }).bark.retryOnce, true);
+});
+
+test('normalizeNotificationEvents enables the layer and every event by default', () => {
+  const events = normalizeNotificationEvents(undefined);
+  assert.equal(events.enabled, true);
+  assert.equal(events.maxPerHour, 6);
+
+  Object.keys(NOTIFICATION_EVENT_SPECS).forEach((type) => {
+    assert.equal(events[type].enabled, true, `${type} should default to enabled`);
+    assert.equal(events[type].cooldownMs, NOTIFICATION_EVENT_SPECS[type].cooldownMs);
+  });
+
+  assert.equal(events.botStuck.stuckMs, 1800000);
+  assert.equal(events.serverAllOffline.offlineMs, 120000);
+  assert.equal(events.serverAllOffline.minBots, 2);
+  assert.equal(events.logFileTooLarge.maxBytes, 1073741824);
+  assert.equal(events.apiAuthFailure.threshold, 10);
+  assert.equal(events.uncaughtException.windowMs, 3600000);
+});
+
+test('normalizeNotificationEvents honors overrides and explicit disabling', () => {
+  const events = normalizeNotificationEvents({
+    enabled: false,
+    maxPerHour: 12,
+    botStuck: { enabled: false, stuckMs: 900000, cooldownMs: 0 },
+    deviceCode: { cooldownMs: 'abc' },
+    apiAuthFailure: { threshold: 3 }
+  });
+
+  assert.equal(events.enabled, false);
+  assert.equal(events.maxPerHour, 12);
+  assert.equal(events.botStuck.enabled, false);
+  assert.equal(events.botStuck.stuckMs, 900000);
+  assert.equal(events.botStuck.cooldownMs, 0);
+  assert.equal(events.deviceCode.cooldownMs, 600000, '非数字冷却应回落到默认值');
+  assert.equal(events.apiAuthFailure.threshold, 3);
+  assert.equal(events.apiAuthFailure.cooldownMs, 1800000);
+});
+
+test('notification event cooldown defaults stay in sync with BarkNotifier', () => {
+  Object.keys(NOTIFICATION_EVENT_SPECS).forEach((type) => {
+    assert.equal(
+      EVENT_COOLDOWN_DEFAULTS[type],
+      NOTIFICATION_EVENT_SPECS[type].cooldownMs,
+      `${type} 的冷却默认值在两处必须一致`
+    );
+  });
 });
 
