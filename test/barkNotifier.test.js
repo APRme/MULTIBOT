@@ -42,6 +42,17 @@ function readBarkLog(appRoot, logPath = './logs/bark.log') {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
+// 硬性约束(AGENTS.md): .ps1 必须是 UTF-8 with BOM, 否则 Windows PowerShell 5.1 会按 ANSI
+// 解码含中文的脚本并报解析错误(如 MissingArrayIndexExpression)。编辑后务必保持该断言通过。
+test('bark-push.ps1 is stored as UTF-8 with BOM exactly once', () => {
+  const scriptPath = path.join(__dirname, '..', 'src', 'notifications', 'bark', 'bark-push.ps1');
+  const bytes = fs.readFileSync(scriptPath);
+
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'bark-push.ps1 缺少 UTF-8 BOM');
+  assert.notDeepEqual([...bytes.subarray(3, 6)], [0xef, 0xbb, 0xbf], 'bark-push.ps1 出现重复 BOM');
+  assert.equal(bytes.subarray(3).includes(0x00), false, 'bark-push.ps1 含 NUL 字节(编码已损坏)');
+});
+
 test('BarkNotifier does not spawn when disabled', async () => {
   const { notifier, calls, appRoot } = createNotifier({ enabled: false });
   assert.equal(notifier.isEnabled(), false);

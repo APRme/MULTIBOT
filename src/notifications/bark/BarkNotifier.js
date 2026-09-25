@@ -80,7 +80,8 @@ class BarkNotifier {
   }
 
   // 返回 Promise<{ ok, reason, elapsedMs }>
-  //  reason: null(成功) | 脚本给出的脱敏分类(timeout/http-401/tls-fail/...) |
+  //  reason: null(成功) | 脚本给出的脱敏分类(timeout/http-401/tls-fail/dns-fail/connect-fail/
+  //          env-missing/env-incomplete/crypto-key-invalid/crypto-mode-unsupported/...) |
   //          disabled | non-windows | spawn-error | wrapper-timeout | unknown
   // retryOnce=true 时首次失败会等待 getRetryDelayMs() 后重发一次(最多 2 次), 返回最后一次结果
   notify({ title, body, group, label } = {}) {

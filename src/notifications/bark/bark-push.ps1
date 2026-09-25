@@ -55,11 +55,19 @@ $SweepSounds = @('alarm','bell','birdsong','chime','minuet','electronic','horn',
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# 预检失败(配置类问题, 请求根本没发出去): 同样输出脱敏 reason, 便于在 logs/bark.log 里区分排查
+function Exit-BarkPreflight([string]$Reason, [string[]]$Messages) {
+  foreach ($line in $Messages) { Write-Host $line -ForegroundColor Red }
+  Write-Host ("[FAIL] reason={0} elapsed=0.0s sound= crypto=preflight" -f $Reason) -ForegroundColor Red
+  exit 1
+}
+
 $cfgPath = if ($EnvPath) { $EnvPath } else { Join-Path $PSScriptRoot '.env' }
 if (-not (Test-Path -LiteralPath $cfgPath)) {
-  Write-Host "找不到配置文件: $cfgPath" -ForegroundColor Red
-  Write-Host "请把 .env 放到该路径（见 README 第 2、3 节），或用 -EnvPath 指定" -ForegroundColor Yellow
-  exit 1
+  Exit-BarkPreflight 'env-missing' @(
+    "找不到配置文件: $cfgPath",
+    "请把 .env 放到该路径（见 README 第 2、3 节），或用 -EnvPath 指定"
+  )
 }
 
 $cfg = @{}
@@ -70,7 +78,7 @@ Get-Content -LiteralPath $cfgPath |
     if ($i -gt 0) { $cfg[$_.Substring(0, $i).Trim()] = $_.Substring($i + 1).Trim() }
   }
 foreach ($k in @('BARK_URL','BARK_AUTH_USER','BARK_AUTH_PASS','BARK_DEVICE_KEY')) {
-  if (-not $cfg[$k]) { Write-Host "配置项缺失或为空: $k" -ForegroundColor Red; exit 1 }
+  if (-not $cfg[$k]) { Exit-BarkPreflight 'env-incomplete' @("配置项缺失或为空: $k") }
 }
 
 $auth = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($cfg.BARK_AUTH_USER):$($cfg.BARK_AUTH_PASS)"))
@@ -84,19 +92,20 @@ $CryptoLabel   = '未启用(明文)'
 
 if ($CryptoKey -and -not $Plain) {
   if ($CryptoKey -match '[^\x20-\x7E]') {
-    Write-Host "BARK_CRYPTO_KEY 含非 ASCII 字符。App 按【字符数】校验长度、却按【UTF-8 字节】当密钥，会解不开。" -ForegroundColor Red
-    Write-Host "请改成纯字母数字。" -ForegroundColor Yellow
-    exit 1
+    Exit-BarkPreflight 'crypto-key-invalid' @(
+      "BARK_CRYPTO_KEY 含非 ASCII 字符。App 按【字符数】校验长度、却按【UTF-8 字节】当密钥，会解不开。",
+      "请改成纯字母数字。"
+    )
   }
   $bits = switch ($CryptoKey.Length) { 16 {128} 24 {192} 32 {256} default { 0 } }
   if ($bits -eq 0) {
-    Write-Host "BARK_CRYPTO_KEY 长度必须是 16 / 24 / 32（当前 $($CryptoKey.Length)）" -ForegroundColor Red
-    exit 1
+    Exit-BarkPreflight 'crypto-key-invalid' @("BARK_CRYPTO_KEY 长度必须是 16 / 24 / 32（当前 $($CryptoKey.Length)）")
   }
   if ($CryptoMode -ne 'CBC' -or $CryptoPadding -ne 'pkcs7') {
-    Write-Host "本脚本目前只实现了 CBC + pkcs7（当前 mode=$CryptoMode padding=$CryptoPadding）。" -ForegroundColor Red
-    Write-Host "请在 Bark App 里选 AES$bits / CBC / pkcs7，并把 .env 的 BARK_CRYPTO_MODE、BARK_CRYPTO_PADDING 改成 CBC、pkcs7。" -ForegroundColor Yellow
-    exit 1
+    Exit-BarkPreflight 'crypto-mode-unsupported' @(
+      "本脚本目前只实现了 CBC + pkcs7（当前 mode=$CryptoMode padding=$CryptoPadding）。",
+      "请在 Bark App 里选 AES$bits / CBC / pkcs7，并把 .env 的 BARK_CRYPTO_MODE、BARK_CRYPTO_PADDING 改成 CBC、pkcs7。"
+    )
   }
   $CryptoEnabled = $true
   $CryptoLabel   = "AES-$bits-CBC/pkcs7"
