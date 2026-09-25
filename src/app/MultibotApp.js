@@ -15,7 +15,7 @@ const { InstanceLifecycleLogService, LIFECYCLE_EVENTS } = require('../logging/In
 const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
 const { summarizeError } = require('../util/redact');
 
-const MULTIBOT_VERSION = 'V26.4.26-BarkNotification';
+const MULTIBOT_VERSION = 'V26.4.27-BarkNotification';
 
 class MultibotApp {
   constructor(options = {}) {

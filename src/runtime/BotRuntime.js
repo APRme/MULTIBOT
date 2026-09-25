@@ -2171,7 +2171,9 @@ class BotRuntime {
 
       const cleanup = () => {
         pendingKeys.slice(1).forEach((key) => {
-          if (typeof this.barkNotifier.clearEventState === 'function') {
+          if (typeof this.barkNotifier.markEventResolved === 'function') {
+            this.barkNotifier.markEventResolved(key);
+          } else if (typeof this.barkNotifier.clearEventState === 'function') {
             this.barkNotifier.clearEventState(key);
           }
         });

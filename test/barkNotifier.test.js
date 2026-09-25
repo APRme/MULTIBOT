@@ -201,7 +201,7 @@ test('BarkNotifier prunes event states idle for more than 24 hours', () => {
   assert.equal(notifier.eventStates.size, 0);
 });
 
-test('BarkNotifier throttles [SKIP] lines to the first and every tenth suppression', async () => {
+test('BarkNotifier throttles [SKIP] lines by time and count', async () => {
   const clock = { value: 1000000 };
   const { notifier, children, appRoot } = createEventNotifier();
   notifier.now = () => clock.value;
@@ -211,16 +211,57 @@ test('BarkNotifier throttles [SKIP] lines to the first and every tenth suppressi
   completeAttempt(children[0], '[OK/https] code=200');
   await first;
 
+  // 高频(时钟不动): 25 次抑制只写第一行, 避免"每 10 次一行"在请求路径上疯狂同步写盘
   for (let i = 0; i < 25; i += 1) {
     const suppressed = await notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
     assert.equal(suppressed.reason, 'cooldown');
   }
-
-  const skipLines = readBarkLog(appRoot).split('\n').filter((line) => line.includes('[SKIP]'));
-  assert.equal(skipLines.length, 3, '第 1、10、20 次各写一行');
+  let skipLines = readBarkLog(appRoot).split('\n').filter((line) => line.includes('[SKIP]'));
+  assert.equal(skipLines.length, 1, '同一分钟内只留第一行');
   assert.match(skipLines[0], /suppressed=1$/);
-  assert.match(skipLines[1], /suppressed=10$/);
-  assert.match(skipLines[2], /suppressed=20$/);
+
+  // 低频(每跳间隔 1 分钟, 次数到 10 的整数倍): 才会继续留痕
+  for (let i = 0; i < 9; i += 1) {
+    clock.value += 60000;
+    await notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+  }
+  skipLines = readBarkLog(appRoot).split('\n').filter((line) => line.includes('[SKIP]'));
+  assert.equal(skipLines.length, 2, '第 30 次抑制(时间已过 60s 且次数为 10 的整数倍)留一行');
+  assert.match(skipLines[1], /suppressed=30$/);
+});
+
+test('BarkNotifier.notifyRecovery keeps the cooldown clock so re-alerts are throttled', async () => {
+  let clock = 1000000;
+  const { notifier, children, appRoot } = createEventNotifier({}, {
+    spawnResults: () => {
+      const child = makeFakeChild();
+      children.push(child);
+      return child;
+    }
+  });
+  notifier.now = () => clock;
+
+  const failure = notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[0], '[OK/https] code=200');
+  await failure;
+
+  const recovery = notifier.notifyRecovery({ type: 'botStuck', key: 'bot:stuck:alpha', body: '已恢复', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[1], '[OK/https] code=200');
+  assert.equal((await recovery).sent, true);
+
+  // 恢复后同一 key 的故障状态已清(可以再报警/再配对恢复), 但冷却时钟保留 -> 冷却期内不重复告警
+  const tooSoon = await notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '又卡住', label: 'alpha' });
+  assert.equal(tooSoon.sent, false);
+  assert.equal(tooSoon.reason, 'cooldown');
+
+  clock += 1800000;
+  const afterCooldown = notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '又卡住', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[2], '[OK/https] code=200');
+  assert.equal((await afterCooldown).sent, true);
+  assert.match(readBarkLog(appRoot), /key=bot:stuck:alpha recovery/);
 });
 
 test('BarkNotifier event state pruning keeps the injected event state working', async () => {

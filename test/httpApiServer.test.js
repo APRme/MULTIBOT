@@ -1045,6 +1045,29 @@ test('HttpApiServer keeps the real client IP from X-Forwarded-For', async () => 
   });
 });
 
+test('HttpApiServer strips the port so a spoofed port cannot split the alert key', async () => {
+  const events = [];
+
+  await withAuthFailureServer(events, { threshold: 2, windowMs: 600000 }, async (port) => {
+    await makeRequest({
+      port,
+      path: '/api/bots',
+      token: 'wrong-token',
+      extraHeaders: { 'X-Forwarded-For': '203.0.113.9:8443' }
+    });
+    await makeRequest({
+      port,
+      path: '/api/bots',
+      token: 'wrong-token',
+      extraHeaders: { 'X-Forwarded-For': '203.0.113.9:12345' }
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(events.length, 1, '换端口不产生新 key(否则阈值永远到不了)');
+    assert.equal(events[0].key, 'api:auth-fail:203.0.113.9');
+  });
+});
+
 test('HttpApiServer sanitizes spoofed X-Forwarded-For before it reaches the alert', async () => {
   const events = [];
 

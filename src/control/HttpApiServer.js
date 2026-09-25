@@ -3,7 +3,8 @@ const { EventThresholdTracker } = require('../notifications/EventThresholdTracke
 
 const MAX_TRACKED_AUTH_FAILURE_IPS = 500;
 const MAX_CLIENT_IP_LENGTH = 45;
-const IPV4_PATTERN = /^\d{1,3}(\.\d{1,3}){3}(:\d{1,5})?$/;
+const IPV4_PATTERN = /^\d{1,3}(\.\d{1,3}){3}$/;
+const IPV4_PORT_SUFFIX_PATTERN = /:\d{1,5}$/;
 const IPV6_PATTERN = /^[0-9a-fA-F:.]{2,45}$/;
 
 class HttpApiServer {
@@ -80,9 +81,10 @@ class HttpApiServer {
   }
 
   // 取客户端 IP: nginx 反代时 socket.remoteAddress 恒为 127.0.0.1, 优先用 X-Forwarded-For 首段。
-  // 该头是客户端可伪造的, 且会被写进推送正文与去重 key, 因此: 优先按 IPv4(可带端口)/IPv6 校验,
-  // 只保留 IP 字符集并截断长度, 不像 IP 的一律归入 unknown(避免用假值刷出大量不同 key 或撑爆正文)。
-  // 仅用于告警分组(不是访问控制), 因此被伪造也只影响分组。
+  // 该头是客户端可伪造的, 且会被写进推送正文与去重 key, 因此: 只保留 IP 字符集并截断长度,
+  // **剥掉 IPv4 的端口**(否则攻击者每次换个端口就能让每个 key 的计数恒为 1, 阈值永远到不了 = 告警失效),
+  // 不像 IP 的一律归入 unknown(避免用假值刷出大量不同 key 或撑爆正文)。
+  // 仅用于告警分组(不是访问控制), 因此被伪造也只影响分组; 换 IP 规避无法防(除非只信 socket 或校验代理链)。
   getClientIp(req) {
     const forwarded = req && req.headers ? req.headers['x-forwarded-for'] : null;
     const raw = typeof forwarded === 'string' && forwarded.trim()
@@ -93,9 +95,10 @@ class HttpApiServer {
       .trim()
       .slice(0, MAX_CLIENT_IP_LENGTH)
       .replace(/[^0-9a-fA-F:.]/g, '');
+    const withoutPort = cleaned.replace(IPV4_PORT_SUFFIX_PATTERN, '');
 
-    if (IPV4_PATTERN.test(cleaned)) {
-      return cleaned;
+    if (IPV4_PATTERN.test(withoutPort)) {
+      return withoutPort;
     }
     if ((cleaned.match(/:/g) || []).length >= 2 && IPV6_PATTERN.test(cleaned)) {
       return cleaned;

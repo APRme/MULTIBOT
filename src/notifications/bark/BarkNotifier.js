@@ -25,8 +25,12 @@ const DEFAULT_MAX_EVENT_STATES = 2000;
 const EVENT_STATE_TTL_MS = 24 * 3600000;
 const HOUR_MS = 3600000;
 const MAX_CAPTURED_OUTPUT = 8192;
-// 抑制日志降频: 第 1 次与之后每 10 次写一行 [SKIP](长时间故障期间每跳都写会把 bark.log 刷大)
+// 抑制日志节流: 第 1 次一定写; 之后要求"距上次写已过 SUPPRESSION_LOG_INTERVAL_MS"且"累计次数为
+// SUPPRESSION_LOG_EVERY 的整数倍"。双重下限是因为两类事件频率差几个数量级:
+//   巡查类(60s 一跳) -> 时间下限生效, 约 1 行/10 分钟
+//   请求类(每请求一次) -> 时间下限生效, 约 1 行/分钟(而不是每 10 次一行 = 100 行/秒的同步写盘)
 const SUPPRESSION_LOG_EVERY = 10;
+const SUPPRESSION_LOG_INTERVAL_MS = 60000;
 
 // 严重度 -> Bark level(决定是否突破专注模式/是否有声)
 const SEVERITY_LEVELS = {
@@ -138,6 +142,7 @@ class BarkNotifier {
         lastAttemptAt: 0,
         lastSentAt: 0,
         lastSuppressedAt: 0,
+        lastSuppressionLogAt: 0,
         sentCount: 0,
         suppressed: 0
       };
@@ -183,12 +188,35 @@ class BarkNotifier {
     return dropped;
   }
 
-  // 抑制日志降频: 第 1 次与之后每 SUPPRESSION_LOG_EVERY 次写一行
-  appendSuppressionLog(eventKey, type, reason, count) {
-    if (count !== 1 && count % SUPPRESSION_LOG_EVERY !== 0) {
+  // 抑制日志节流(见文件头常量说明): 第 1 次一定写, 之后时间与次数双重下限
+  appendSuppressionLog(eventKey, type, reason, count, now = this.now()) {
+    const state = this.eventStates.get(eventKey);
+    const lastLogAt = state ? state.lastSuppressionLogAt || 0 : 0;
+    const timeOk = now - lastLogAt >= SUPPRESSION_LOG_INTERVAL_MS;
+    const countOk = count % SUPPRESSION_LOG_EVERY === 0;
+
+    if (count !== 1 && !(timeOk && countOk)) {
       return;
     }
+    if (state) {
+      state.lastSuppressionLogAt = now;
+    }
     this.appendLog(`${getTimestamp()} [SKIP] key=${eventKey} type=${type || '-'} reason=${reason} suppressed=${count}`);
+  }
+
+  // 恢复时收尾: 清掉这一轮故障的痕迹(下一轮还能报警、还能配对恢复), 但**保留冷却时钟**
+  // (lastAttemptAt)。否则"刚恢复又立刻因为窗口内计数仍超阈值而重复告警", 与恢复通知的语义相冲。
+  markEventResolved(key) {
+    const state = this.eventStates.get(key);
+    if (!state) return false;
+
+    state.firstSeenAt = 0;
+    state.lastSentAt = 0;
+    state.lastSuppressedAt = 0;
+    state.lastSuppressionLogAt = 0;
+    state.sentCount = 0;
+    state.suppressed = 0;
+    return true;
   }
 
   clearEventState(key) {
@@ -244,14 +272,14 @@ class BarkNotifier {
     if (state.lastAttemptAt && now - state.lastAttemptAt < eventConfig.cooldownMs) {
       state.suppressed += 1;
       state.lastSuppressedAt = now;
-      this.appendSuppressionLog(eventKey, type, 'cooldown', state.suppressed);
+      this.appendSuppressionLog(eventKey, type, 'cooldown', state.suppressed, now);
       return { sent: false, ok: false, reason: 'cooldown', folded: 0, suppressed: state.suppressed };
     }
 
     if (this.isRateLimited(now)) {
       state.suppressed += 1;
       state.lastSuppressedAt = now;
-      this.appendSuppressionLog(eventKey, type, 'rate-limit', state.suppressed);
+      this.appendSuppressionLog(eventKey, type, 'rate-limit', state.suppressed, now);
       return { sent: false, ok: false, reason: 'rate-limit', folded: 0, suppressed: state.suppressed };
     }
 
@@ -281,7 +309,8 @@ class BarkNotifier {
     return { sent: false, ok: false, reason: result.reason, folded, suppressed: state.suppressed };
   }
 
-  // 恢复通知: 只有同一个 key 之前真发出去过故障通知(或 force=true)才推, 推完清空该 key 的状态
+  // 恢复通知: 只有同一个 key 之前真发出去过故障通知(或 force=true)才推。
+  // 收尾用 markEventResolved(保留冷却时钟), 避免"一恢复就立刻重复告警"。
   async notifyRecovery({ type, key, title, body, label, severity = 'active', force = false } = {}) {
     const eventKey = key || type || 'event';
 
@@ -293,7 +322,7 @@ class BarkNotifier {
     const state = this.eventStates.get(eventKey);
     const hadFailure = Boolean(state && state.lastSentAt);
     if (!hadFailure && !force) {
-      this.clearEventState(eventKey);
+      this.markEventResolved(eventKey);
       return { sent: false, reason: 'no-pending-failure' };
     }
     const now = this.now();
@@ -307,7 +336,7 @@ class BarkNotifier {
       logKey: `${eventKey} recovery`
     });
 
-    this.clearEventState(eventKey);
+    this.markEventResolved(eventKey);
     return { sent: result.ok, reason: result.reason, durationMs };
   }
 
@@ -521,5 +550,6 @@ module.exports = {
   DEFAULT_EVENT_COOLDOWN_MS,
   DEFAULT_MAX_PER_HOUR,
   DEFAULT_MAX_EVENT_STATES,
-  SUPPRESSION_LOG_EVERY
+  SUPPRESSION_LOG_EVERY,
+  SUPPRESSION_LOG_INTERVAL_MS
 };
