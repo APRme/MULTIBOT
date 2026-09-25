@@ -35,6 +35,16 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local agent scratch area and pending-delete holding area (never versioned)
+/.temp/
+/.pending-delete/
+
+# Test scratch output
+/test/.tmp/
+
+# Local warehouse runtime data (rules + sqlite); keep out of the public repo
+/WareHouse/
+
 # Reasonix auto-generated files
 .reasonix/
 
