@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const mineflayer = require('mineflayer');
 const {
@@ -1823,6 +1824,92 @@ test('BotRuntime suppresses ignorable protocol parse warnings when disabled', ()
   runtime.handleError(new Error('slot compound invalid tag: 70 > 20'));
 
   assert.equal(runtime.getDetails().logs.length, 0);
+});
+
+function createAuthPaths(tempDir) {
+  return {
+    accountDir: tempDir,
+    scriptsDir: tempDir,
+    lockHistoryPath: path.join(tempDir, 'lock_history.txt'),
+    authCacheDir: path.join(tempDir, 'auth-cache'),
+    fallbackAuthCacheDir: path.join(tempDir, 'nmp-cache')
+  };
+}
+
+function xblCachePath(tempDir, email) {
+  const hash = crypto.createHash('sha1').update(email ?? '', 'binary').digest('hex').slice(0, 6);
+  return path.join(tempDir, 'auth-cache', `${hash}_xbl-cache.json`);
+}
+
+function makeXbox403Error() {
+  const error = new Error('403 Forbidden {}');
+  error.stack = [
+    'Error: 403 Forbidden {}',
+    '    at checkStatus (D:\\mineflayer\\node_modules\\prismarine-auth\\src\\common\\Util.js:10:11)',
+    '    at async XboxTokenManager.getTitleToken (D:\\mineflayer\\node_modules\\prismarine-auth\\src\\TokenManagers\\XboxTokenManager.js:258:17)'
+  ].join('\n');
+  return error;
+}
+
+test('BotRuntime resets xbl cache and retries on prismarine-auth xbox 403 during startup', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-'));
+  const runtime = createRuntime({ config: { paths: createAuthPaths(tempDir) } });
+  runtime.state = 'starting';
+  const cachePath = xblCachePath(tempDir, 'alpha@example.com');
+
+  try {
+    runtime.handleError(makeXbox403Error());
+
+    assert.ok(fs.existsSync(cachePath), 'xbl cache file written');
+    assert.equal(fs.readFileSync(cachePath, 'utf8'), '{}');
+    assert.equal(runtime.pendingRestartReason, 'auth_cache_reset');
+  } finally {
+    runtime.clearRestartTimer();
+  }
+});
+
+test('BotRuntime leaves other 403 or non-xbox errors untouched', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-neg-'));
+  const cachePath = xblCachePath(tempDir, 'alpha@example.com');
+
+  // 1) 403 但不在登录阶段(online)
+  const onlineRuntime = createRuntime({ config: { paths: createAuthPaths(tempDir) } });
+  onlineRuntime.state = 'online';
+  onlineRuntime.handleError(makeXbox403Error());
+  assert.equal(onlineRuntime.pendingRestartReason, null);
+  assert.equal(fs.existsSync(cachePath), false);
+
+  // 2) 403 但堆栈不是 prismarine-auth
+  const foreignRuntime = createRuntime({ config: { paths: createAuthPaths(tempDir) } });
+  foreignRuntime.state = 'starting';
+  const foreignError = new Error('403 Forbidden {}');
+  foreignError.stack = 'Error: 403 Forbidden {}\n    at someOtherClient (D:\\app\\client.js:1:1)';
+  foreignRuntime.handleError(foreignError);
+  assert.equal(foreignRuntime.pendingRestartReason, null);
+  assert.equal(fs.existsSync(cachePath), false);
+
+  // 3) prismarine-auth 堆栈但不是 XboxTokenManager
+  const otherStageRuntime = createRuntime({ config: { paths: createAuthPaths(tempDir) } });
+  otherStageRuntime.state = 'starting';
+  const otherStageError = new Error('403 Forbidden {}');
+  otherStageError.stack = 'Error: 403 Forbidden {}\n    at async MsaTokenManager.getAccessToken (D:\\mineflayer\\node_modules\\prismarine-auth\\src\\TokenManagers\\MsaTokenManager.js:1:1)';
+  otherStageRuntime.handleError(otherStageError);
+  assert.equal(otherStageRuntime.pendingRestartReason, null);
+  assert.equal(fs.existsSync(cachePath), false);
+});
+
+test('BotRuntime resetAuthCache is safe without existing cache directory', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-safe-'));
+  const runtime = createRuntime({
+    config: {
+      paths: {
+        ...createAuthPaths(tempDir),
+        authCacheDir: path.join(tempDir, 'missing-auth-cache')
+      }
+    }
+  });
+
+  assert.doesNotThrow(() => runtime.resetAuthCache('xbl'));
 });
 
 test('classifyDisconnectReason recognizes ViaProxy backend messages', () => {

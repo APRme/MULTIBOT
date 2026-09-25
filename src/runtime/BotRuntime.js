@@ -2011,6 +2011,51 @@ class BotRuntime {
       this.requestRestart('retryable_error', this.restartPolicy.getDelayMs());
       return;
     }
+
+    // prismarine-auth 登录阶段 Xbox token 403: 缓存里的 device/title token 本地未过期,
+    // 但由旧 EC 密钥获取(每次认证都会新生成密钥), 复用后与当前 ProofKey 不匹配 -> 每次
+    // 重取 title token 都被拒。清 xbl 缓存后按退避策略重试, 下一次认证会用当前密钥重取。
+    // 判据必须精准(四条件), 避免误伤其他来源的 403。
+    const errorStack = error && typeof error.stack === 'string' ? error.stack : '';
+    if (
+      this.state === 'starting' &&
+      lower.includes('403') &&
+      lower.includes('forbidden') &&
+      errorStack.includes('prismarine-auth') &&
+      /XboxTokenManager\./.test(errorStack)
+    ) {
+      this.resetAuthCache('xbl');
+      this.logger.warn('[AUTH] reset xbl cache after prismarine-auth xbox 403; scheduling retry');
+      this.requestRestart('auth_cache_reset', this.restartPolicy.getDelayMs());
+      return;
+    }
+  }
+
+  // 重置指定 prismarine-auth 缓存(如 'xbl'): reset() 将缓存内容写为空对象 {},
+  // 不删除/不移动文件; 保留 msa/live 缓存以便 refresh_token 静默刷新(无需设备码)。
+  // 注: DualFileCache 的写盘是同步完成(fs.writeFileSync), 故无需 await。
+  resetAuthCache(cacheName) {
+    try {
+      const factory = createAuthCacheFactory({
+        primaryDir: this.config?.paths?.authCacheDir,
+        fallbackDir: this.config?.paths?.fallbackAuthCacheDir,
+        primaryUsername: this.config?.email
+      });
+      const cache = factory({ cacheName, username: this.config?.username });
+      if (!cache || typeof cache.reset !== 'function') {
+        this.logger.warn(`[AUTH] reset auth cache skipped (unavailable) name=${cacheName}`);
+        return false;
+      }
+
+      cache.reset();
+      this.logger.warn(`[AUTH] auth cache reset name=${cacheName}`);
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `[AUTH] reset auth cache failed name=${cacheName}: ${error && error.message ? error.message : error}`
+      );
+      return false;
+    }
   }
 
   requestRestart(reason, delayMs) {
