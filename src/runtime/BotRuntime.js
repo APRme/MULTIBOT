@@ -394,6 +394,8 @@ class BotRuntime {
     this.pingTimer = null;
     this.pingResolve = null;
     this.lastKnownPosition = null;
+    this.barkNotifier = options.barkNotifier || null;
+    this.lastBarkAuthNotifyAt = 0;
     this.decompressorErrorGuarded = new WeakSet();
     this.protocolErrorLogPath = null; // 为空时默认 <cwd>/logs/protocol-errors.log
     this.diagnostics = {
@@ -2026,9 +2028,44 @@ class BotRuntime {
     ) {
       this.resetAuthCache('xbl');
       this.logger.warn('[AUTH] reset xbl cache after prismarine-auth xbox 403; scheduling retry');
+      this.notifyBarkAuth403();
       this.requestRestart('auth_cache_reset', this.restartPolicy.getDelayMs());
       return;
     }
+  }
+
+  // 403 自愈时推送手机提醒(标题 MULTIBOT Downdetector); 同一 bot 在冷却期内只推一次,
+  // 其余情况只写日志。推送内容不含任何凭据(device_key 等由脚本自行读取)。
+  notifyBarkAuth403() {
+    if (
+      !this.barkNotifier
+      || typeof this.barkNotifier.notify !== 'function'
+      || typeof this.barkNotifier.isEnabled !== 'function'
+      || !this.barkNotifier.isEnabled()
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+    const cooldownMs = typeof this.barkNotifier.getCooldownMs === 'function'
+      ? this.barkNotifier.getCooldownMs()
+      : 600000;
+    if (this.lastBarkAuthNotifyAt && now - this.lastBarkAuthNotifyAt < cooldownMs) {
+      this.logger.info(`[NOTIFY] bark 403 push skipped (cooldown) bot=${this.config.id}`);
+      return;
+    }
+    this.lastBarkAuthNotifyAt = now;
+
+    const account = this.config.email || this.config.username || 'unknown';
+    const body = `${this.config.id} (${account}) @ ${this.config.host} 认证403, 已清 xbl 缓存并安排重试`;
+
+    this.barkNotifier.notify({ title: 'MULTIBOT Downdetector', body })
+      .then((ok) => {
+        this.logger.info(`[NOTIFY] bark 403 push ${ok ? 'ok' : 'fail'} bot=${this.config.id}`);
+      })
+      .catch(() => {
+        this.logger.warn(`[NOTIFY] bark 403 push error bot=${this.config.id}`);
+      });
   }
 
   // 重置指定 prismarine-auth 缓存(如 'xbl'): reset() 将缓存内容写为空对象 {},

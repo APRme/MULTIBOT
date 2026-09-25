@@ -40,6 +40,16 @@
   "consoleConnector": {
     "historyLimit": 300
   },
+  "notifications": {
+    "bark": {
+      "enabled": false,
+      "scriptPath": "./src/notifications/bark/bark-push.ps1",
+      "envPath": "./.env",
+      "group": "mc",
+      "cooldownMs": 600000,
+      "timeoutMs": 25000
+    }
+  },
   "defaults": {
     "auth": "microsoft",
     "version": "1.21.11",

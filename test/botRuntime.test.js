@@ -145,6 +145,7 @@ function createRuntime(overrides = {}) {
     broadcastService: overrides.broadcastService || null,
     protocolGuardConfig: overrides.protocolGuardConfig || null,
     diagnosticsConfig: overrides.diagnosticsConfig || null,
+    barkNotifier: overrides.barkNotifier || null,
     restartPolicyOptions: overrides.restartPolicyOptions || null,
     openAuthResolver: overrides.openAuthResolver,
     openAuthClientFactory: overrides.openAuthClientFactory,
@@ -1910,6 +1911,64 @@ test('BotRuntime resetAuthCache is safe without existing cache directory', () =>
   });
 
   assert.doesNotThrow(() => runtime.resetAuthCache('xbl'));
+});
+
+test('BotRuntime pushes bark notification on prismarine-auth xbox 403 with cooldown', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-bark-'));
+  const notifications = [];
+  const notifier = {
+    isEnabled: () => true,
+    getCooldownMs: () => 600000,
+    notify(payload) {
+      notifications.push(payload);
+      return Promise.resolve(true);
+    }
+  };
+  const runtime = createRuntime({
+    config: { paths: createAuthPaths(tempDir) },
+    barkNotifier: notifier
+  });
+  runtime.state = 'starting';
+
+  try {
+    runtime.handleError(makeXbox403Error());
+    // 真实流程: 403 后进入 waiting_restart, 冷却期内重试再次进入开始阶段并又遇 403
+    runtime.state = 'starting';
+    runtime.handleError(makeXbox403Error());
+
+    assert.equal(notifications.length, 1, 'only one push within cooldown');
+    assert.equal(notifications[0].title, 'MULTIBOT Downdetector');
+    assert.match(notifications[0].body, /alpha/);
+    assert.match(notifications[0].body, /认证403/);
+    assert.ok(runtime.logger.getRecent().some((entry) => entry.message.includes('bark 403 push skipped (cooldown)')));
+  } finally {
+    runtime.clearRestartTimer();
+  }
+});
+
+test('BotRuntime skips bark notification when notifier is disabled', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-bark-off-'));
+  let called = 0;
+  const notifier = {
+    isEnabled: () => false,
+    getCooldownMs: () => 600000,
+    notify() {
+      called++;
+      return Promise.resolve(true);
+    }
+  };
+  const runtime = createRuntime({
+    config: { paths: createAuthPaths(tempDir) },
+    barkNotifier: notifier
+  });
+  runtime.state = 'starting';
+
+  try {
+    runtime.handleError(makeXbox403Error());
+    assert.equal(called, 0);
+  } finally {
+    runtime.clearRestartTimer();
+  }
 });
 
 test('classifyDisconnectReason recognizes ViaProxy backend messages', () => {

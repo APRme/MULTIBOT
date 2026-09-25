@@ -371,6 +371,29 @@ function normalizeConsoleConnectorConfig(rawConfig) {
   };
 }
 
+// 通知(目前仅 Bark 推送): 默认关闭; 关键错误(如 prismarine-auth 登录 403)触发手机推送
+function normalizeNotificationsConfig(rawConfig) {
+  const source = isPlainObject(rawConfig) ? rawConfig : {};
+  const bark = isPlainObject(source.bark) ? source.bark : {};
+
+  return {
+    bark: {
+      enabled: bark.enabled === true,
+      scriptPath: typeof bark.scriptPath === 'string' && bark.scriptPath.trim()
+        ? bark.scriptPath.trim()
+        : './src/notifications/bark/bark-push.ps1',
+      envPath: typeof bark.envPath === 'string' && bark.envPath.trim()
+        ? bark.envPath.trim()
+        : './.env',
+      group: typeof bark.group === 'string' && bark.group.trim()
+        ? bark.group.trim()
+        : 'mc',
+      cooldownMs: normalizeNonNegativeInteger(bark.cooldownMs, 600000),
+      timeoutMs: normalizePositiveInteger(bark.timeoutMs, 25000)
+    }
+  };
+}
+
 function extractRuntimeOverrides(source) {
   const output = {};
   const safeSource = isPlainObject(source) ? source : {};
@@ -656,6 +679,7 @@ function loadMasterConfig(options = {}) {
   const diagnostics = normalizeDiagnosticsConfig(raw.diagnostics);
   const aggregateLogging = normalizeAggregateLoggingConfig(raw.aggregateLogging);
   const consoleConnector = normalizeConsoleConnectorConfig(raw.consoleConnector);
+  const notifications = normalizeNotificationsConfig(raw.notifications);
   const explicitBots = loadExplicitBots({
     rawBots: Array.isArray(raw.bots) ? raw.bots : [],
     repoRoot,
@@ -701,6 +725,7 @@ function loadMasterConfig(options = {}) {
     diagnostics,
     aggregateLogging,
     consoleConnector,
+    notifications,
     defaults,
     bots: combinedBots
   };
@@ -712,6 +737,7 @@ module.exports = {
   normalizeDiagnosticsConfig,
   normalizeAggregateLoggingConfig,
   normalizeConsoleConnectorConfig,
+  normalizeNotificationsConfig,
   normalizeAllowedOrigins,
   normalizeTeleportPromptMatchers,
   normalizeOpenAuthConfig,

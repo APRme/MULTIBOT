@@ -8,6 +8,7 @@ const {
   normalizeAllowedOrigins,
   normalizeOpenAuthConfig,
   normalizeChunkBatchReplyChunksPerTick,
+  normalizeNotificationsConfig,
   buildDiscoveredBotConfig
 } = require('../src/config/loadMasterConfig');
 
@@ -1284,5 +1285,35 @@ test('buildDiscoveredBotConfig honors explicit viewDistance and chunk batch repl
 
   assert.equal(rebuilt.viewDistance, 4);
   assert.equal(rebuilt.chunkBatchReplyChunksPerTick, 0);
+});
+
+test('normalizeNotificationsConfig defaults bark to disabled with safe paths', () => {
+  const defaults = normalizeNotificationsConfig(undefined);
+  assert.equal(defaults.bark.enabled, false);
+  assert.equal(defaults.bark.scriptPath, './src/notifications/bark/bark-push.ps1');
+  assert.equal(defaults.bark.envPath, './.env');
+  assert.equal(defaults.bark.group, 'mc');
+  assert.equal(defaults.bark.cooldownMs, 600000);
+  assert.equal(defaults.bark.timeoutMs, 25000);
+});
+
+test('normalizeNotificationsConfig honors overrides and explicit zero cooldown', () => {
+  const config = normalizeNotificationsConfig({
+    bark: {
+      enabled: true,
+      scriptPath: '/opt/bark/bark-push.ps1',
+      envPath: '/opt/bark/.env',
+      group: 'ops',
+      cooldownMs: 0,
+      timeoutMs: 8000
+    }
+  });
+
+  assert.equal(config.bark.enabled, true);
+  assert.equal(config.bark.scriptPath, '/opt/bark/bark-push.ps1');
+  assert.equal(config.bark.envPath, '/opt/bark/.env');
+  assert.equal(config.bark.group, 'ops');
+  assert.equal(config.bark.cooldownMs, 0);
+  assert.equal(config.bark.timeoutMs, 8000);
 });
 

@@ -1,6 +1,7 @@
 const { BotRuntime } = require('./BotRuntime');
 const { BroadcastService } = require('../control/BroadcastService');
 const { ChatConsoleCoordinator } = require('../logging/ChatConsoleCoordinator');
+const { BarkNotifier } = require('../notifications/bark/BarkNotifier');
 
 const DEFAULT_CONSOLE_COMMAND_PREFIX = '/';
 
@@ -28,10 +29,15 @@ class BotManager {
     this.lifecycleLogService = options.lifecycleLogService || null;
     this.consoleConnectorConfig = options.consoleConnectorConfig || null;
     this.diagnosticsConfig = options.diagnosticsConfig || this.masterConfig?.diagnostics || {};
+    this.notificationsConfig = options.notificationsConfig || this.masterConfig?.notifications || null;
     this.runtimes = new Map();
     this.runtimesByInstance = new Map();
     this.broadcastService = new BroadcastService();
     this.chatConsoleCoordinator = new ChatConsoleCoordinator();
+    this.barkNotifier = new BarkNotifier({
+      config: this.notificationsConfig?.bark || {},
+      appRoot: this.masterConfig?.appRoot || process.cwd()
+    });
 
     for (const botConfig of this.masterConfig.bots) {
       this.registerRuntime(this.createRuntime(botConfig));
@@ -86,6 +92,7 @@ class BotManager {
       chatConsoleCoordinator: this.chatConsoleCoordinator,
       protocolGuardConfig: this.masterConfig ? this.masterConfig.protocolGuard : null,
       diagnosticsConfig: this.diagnosticsConfig,
+      barkNotifier: this.barkNotifier,
       loggerBufferSize: Math.max(500, Number.parseInt(this.consoleConnectorConfig?.historyLimit, 10) || 0)
     });
   }

@@ -25,6 +25,10 @@ BOTS/
 # Production master config contains local tokens and paths.
 multibot.config.json
 
+# Bark push credentials (keys must never be committed)
+/.env
+**/.env
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
