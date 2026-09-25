@@ -21,8 +21,12 @@ const DEFAULT_LOG_PATH = './logs/bark.log';
 const DEFAULT_RETRY_DELAY_MS = 2000;
 const DEFAULT_EVENT_COOLDOWN_MS = 600000;
 const DEFAULT_MAX_PER_HOUR = 6;
+const DEFAULT_MAX_EVENT_STATES = 2000;
+const EVENT_STATE_TTL_MS = 24 * 3600000;
 const HOUR_MS = 3600000;
 const MAX_CAPTURED_OUTPUT = 8192;
+// 抑制日志降频: 第 1 次与之后每 10 次写一行 [SKIP](长时间故障期间每跳都写会把 bark.log 刷大)
+const SUPPRESSION_LOG_EVERY = 10;
 
 // 严重度 -> Bark level(决定是否突破专注模式/是否有声)
 const SEVERITY_LEVELS = {
@@ -103,6 +107,11 @@ class BarkNotifier {
     return Number.isFinite(value) && value > 0 ? value : DEFAULT_MAX_PER_HOUR;
   }
 
+  getMaxEventStates() {
+    const value = Number(this.getEventsConfig().maxEventStates);
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_MAX_EVENT_STATES;
+  }
+
   // 返回 { enabled, cooldownMs, ...其它该事件自己的阈值字段 }
   getEventConfig(type) {
     const raw = this.getEventsConfig()[type];
@@ -121,8 +130,11 @@ class BarkNotifier {
   getEventState(key) {
     let state = this.eventStates.get(key);
     if (!state) {
+      if (this.eventStates.size >= this.getMaxEventStates()) {
+        this.pruneEventStates();
+      }
       state = {
-        firstSeenAt: 0,
+        firstSeenAt: this.now(),
         lastAttemptAt: 0,
         lastSentAt: 0,
         lastSuppressedAt: 0,
@@ -132,6 +144,51 @@ class BarkNotifier {
       this.eventStates.set(key, state);
     }
     return state;
+  }
+
+  // 状态表兜底: 先清 24 小时无活动的条目; 仍超上限时按"最久未活动"丢弃, 保证有界。
+  // 主要防高基数 key(如 api:auth-fail:<ip>)把 eventStates 撑大。
+  pruneEventStates(now = this.now()) {
+    const activityOf = (state) => Math.max(
+      state.lastAttemptAt || 0,
+      state.lastSentAt || 0,
+      state.lastSuppressedAt || 0,
+      state.firstSeenAt || 0
+    );
+
+    let dropped = 0;
+    this.eventStates.forEach((state, key) => {
+      if (now - activityOf(state) > EVENT_STATE_TTL_MS) {
+        this.eventStates.delete(key);
+        dropped += 1;
+      }
+    });
+
+    const limit = this.getMaxEventStates();
+    if (this.eventStates.size < limit) {
+      return dropped;
+    }
+
+    const entries = Array.from(this.eventStates.entries())
+      .map(([key, state]) => ({ key, last: activityOf(state) }))
+      .sort((a, b) => a.last - b.last);
+
+    // 留出 1 个空位, 保证调用方插入后不超过上限
+    const overflow = this.eventStates.size - (limit - 1);
+    for (let i = 0; i < overflow && i < entries.length; i += 1) {
+      this.eventStates.delete(entries[i].key);
+      dropped += 1;
+    }
+
+    return dropped;
+  }
+
+  // 抑制日志降频: 第 1 次与之后每 SUPPRESSION_LOG_EVERY 次写一行
+  appendSuppressionLog(eventKey, type, reason, count) {
+    if (count !== 1 && count % SUPPRESSION_LOG_EVERY !== 0) {
+      return;
+    }
+    this.appendLog(`${getTimestamp()} [SKIP] key=${eventKey} type=${type || '-'} reason=${reason} suppressed=${count}`);
   }
 
   clearEventState(key) {
@@ -187,14 +244,14 @@ class BarkNotifier {
     if (state.lastAttemptAt && now - state.lastAttemptAt < eventConfig.cooldownMs) {
       state.suppressed += 1;
       state.lastSuppressedAt = now;
-      this.appendLog(`${getTimestamp()} [SKIP] key=${eventKey} type=${type || '-'} reason=cooldown suppressed=${state.suppressed}`);
+      this.appendSuppressionLog(eventKey, type, 'cooldown', state.suppressed);
       return { sent: false, ok: false, reason: 'cooldown', folded: 0, suppressed: state.suppressed };
     }
 
     if (this.isRateLimited(now)) {
       state.suppressed += 1;
       state.lastSuppressedAt = now;
-      this.appendLog(`${getTimestamp()} [SKIP] key=${eventKey} type=${type || '-'} reason=rate-limit suppressed=${state.suppressed}`);
+      this.appendSuppressionLog(eventKey, type, 'rate-limit', state.suppressed);
       return { sent: false, ok: false, reason: 'rate-limit', folded: 0, suppressed: state.suppressed };
     }
 
@@ -462,5 +519,7 @@ module.exports = {
   DEFAULT_LOG_PATH,
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_EVENT_COOLDOWN_MS,
-  DEFAULT_MAX_PER_HOUR
+  DEFAULT_MAX_PER_HOUR,
+  DEFAULT_MAX_EVENT_STATES,
+  SUPPRESSION_LOG_EVERY
 };

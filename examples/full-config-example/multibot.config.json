@@ -54,6 +54,7 @@
     "events": {
       "enabled": true,
       "maxPerHour": 6,
+      "maxEventStates": 2000,
       "uncaughtException": { "enabled": true, "threshold": 3, "windowMs": 3600000, "cooldownMs": 1800000 },
       "deviceCode": { "enabled": true, "cooldownMs": 600000 },
       "openAuthPermanentFailure": { "enabled": true, "cooldownMs": 600000 },

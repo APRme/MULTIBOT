@@ -1336,6 +1336,7 @@ test('normalizeNotificationEvents enables the layer and every event by default',
   const events = normalizeNotificationEvents(undefined);
   assert.equal(events.enabled, true);
   assert.equal(events.maxPerHour, 6);
+  assert.equal(events.maxEventStates, 2000);
 
   Object.keys(NOTIFICATION_EVENT_SPECS).forEach((type) => {
     assert.equal(events[type].enabled, true, `${type} should default to enabled`);
@@ -1354,6 +1355,7 @@ test('normalizeNotificationEvents honors overrides and explicit disabling', () =
   const events = normalizeNotificationEvents({
     enabled: false,
     maxPerHour: 12,
+    maxEventStates: 50,
     botStuck: { enabled: false, stuckMs: 900000, cooldownMs: 0 },
     deviceCode: { cooldownMs: 'abc' },
     apiAuthFailure: { threshold: 3 }
@@ -1361,6 +1363,7 @@ test('normalizeNotificationEvents honors overrides and explicit disabling', () =
 
   assert.equal(events.enabled, false);
   assert.equal(events.maxPerHour, 12);
+  assert.equal(events.maxEventStates, 50);
   assert.equal(events.botStuck.enabled, false);
   assert.equal(events.botStuck.stuckMs, 900000);
   assert.equal(events.botStuck.cooldownMs, 0);

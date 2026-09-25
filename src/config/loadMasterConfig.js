@@ -392,7 +392,8 @@ function normalizeNotificationEvents(rawConfig) {
   const source = isPlainObject(rawConfig) ? rawConfig : {};
   const events = {
     enabled: source.enabled !== false,
-    maxPerHour: normalizePositiveInteger(source.maxPerHour, 6)
+    maxPerHour: normalizePositiveInteger(source.maxPerHour, 6),
+    maxEventStates: normalizePositiveInteger(source.maxEventStates, 2000)
   };
 
   Object.keys(NOTIFICATION_EVENT_SPECS).forEach((type) => {

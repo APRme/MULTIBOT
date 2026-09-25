@@ -153,6 +153,91 @@ test('BarkNotifier honors custom logPath', async () => {
   assert.equal(readBarkLog(appRoot, './logs/bark.log'), '');
 });
 
+test('BarkNotifier suppresses notification attempts below the threshold', () => {
+  const notifier = new BarkNotifier({ config: { enabled: true }, appRoot: process.cwd() });
+  assert.equal(notifier.getMaxEventStates(), 2000);
+
+  const custom = new BarkNotifier({ config: { enabled: true, events: { maxEventStates: 5 } }, appRoot: process.cwd() });
+  assert.equal(custom.getMaxEventStates(), 5);
+});
+
+test('BarkNotifier caps event state growth and drops the least recently active keys', () => {
+  let clock = 1000000;
+  const notifier = new BarkNotifier({
+    config: { enabled: true, events: { maxEventStates: 3 } },
+    appRoot: process.cwd(),
+    now: () => clock
+  });
+
+  notifier.getEventState('oldest').lastAttemptAt = clock;
+  clock += 1000;
+  notifier.getEventState('middle').lastAttemptAt = clock;
+  clock += 1000;
+  notifier.getEventState('newest').lastAttemptAt = clock;
+
+  clock += 1000;
+  notifier.getEventState('brand-new');
+
+  assert.equal(notifier.eventStates.size, 3, '插入后不超过上限');
+  assert.equal(notifier.eventStates.has('oldest'), false, '最久未活动的被丢弃');
+  assert.equal(notifier.eventStates.has('brand-new'), true);
+});
+
+test('BarkNotifier prunes event states idle for more than 24 hours', () => {
+  let clock = 1000000;
+  const notifier = new BarkNotifier({
+    config: { enabled: true, events: { maxEventStates: 100 } },
+    appRoot: process.cwd(),
+    now: () => clock
+  });
+
+  notifier.getEventState('stale').lastAttemptAt = clock;
+  notifier.getEventState('fresh').lastAttemptAt = clock;
+
+  clock += 25 * 3600000;
+  const dropped = notifier.pruneEventStates();
+
+  assert.equal(dropped, 2);
+  assert.equal(notifier.eventStates.size, 0);
+});
+
+test('BarkNotifier throttles [SKIP] lines to the first and every tenth suppression', async () => {
+  const clock = { value: 1000000 };
+  const { notifier, children, appRoot } = createEventNotifier();
+  notifier.now = () => clock.value;
+
+  const first = notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  completeAttempt(children[0], '[OK/https] code=200');
+  await first;
+
+  for (let i = 0; i < 25; i += 1) {
+    const suppressed = await notifier.notifyEvent({ type: 'botStuck', key: 'bot:stuck:alpha', body: '卡住', label: 'alpha' });
+    assert.equal(suppressed.reason, 'cooldown');
+  }
+
+  const skipLines = readBarkLog(appRoot).split('\n').filter((line) => line.includes('[SKIP]'));
+  assert.equal(skipLines.length, 3, '第 1、10、20 次各写一行');
+  assert.match(skipLines[0], /suppressed=1$/);
+  assert.match(skipLines[1], /suppressed=10$/);
+  assert.match(skipLines[2], /suppressed=20$/);
+});
+
+test('BarkNotifier event state pruning keeps the injected event state working', async () => {
+  const notifier = new BarkNotifier({
+    config: { enabled: true, events: { maxEventStates: 2, botStuck: { cooldownMs: 0 } } },
+    appRoot: process.cwd(),
+    spawnFn: () => makeFakeChild(),
+    platform: 'linux'
+  });
+
+  notifier.getEventState('a');
+  notifier.getEventState('b');
+  notifier.getEventState('c');
+
+  assert.equal(notifier.eventStates.size, 2);
+});
+
 test('BarkNotifier getCooldownMs falls back to default and honors zero', () => {
   const defaults = createNotifier({ enabled: true }).notifier;
   assert.equal(defaults.getCooldownMs(), 600000);
