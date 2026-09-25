@@ -620,7 +620,7 @@ class BotRuntime {
     this.spawnCount += 1;
     this.restartAttempt = 0;
     this.restartScheduleExhausted = false;
-    this.lastSpawnAt = new Date().toISOString();
+    this.lastSpawnAt = getTimestamp();
     this.logger.info('[BOT] spawn');
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_SPAWN, { detail: this.lastSpawnAt });
     this.fishFeature.handleSpawn();
@@ -1110,7 +1110,7 @@ class BotRuntime {
     }
 
     this.diagnostics.connectionCount += 1;
-    this.diagnostics.currentConnectionStartedAt = new Date().toISOString();
+    this.diagnostics.currentConnectionStartedAt = getTimestamp();
     this.diagnostics.currentConnectionEndedAt = null;
     this.diagnostics.currentChunkPackets = createPacketDiagnostics();
     this.refreshWorldColumnDiagnostics();
@@ -1123,7 +1123,7 @@ class BotRuntime {
       this.addRuntimeListener(bot._client, packetName, () => {
         this.diagnostics.totalChunkPackets[fieldName] += 1;
         this.diagnostics.currentChunkPackets[fieldName] += 1;
-        this.diagnostics.lastPacketAt[fieldName] = new Date().toISOString();
+        this.diagnostics.lastPacketAt[fieldName] = getTimestamp();
         this.refreshWorldColumnDiagnostics();
       });
     };
@@ -1243,7 +1243,7 @@ class BotRuntime {
     const count = this.getWorldColumnCount();
     if (count > this.diagnostics.maxWorldColumns) {
       this.diagnostics.maxWorldColumns = count;
-      this.diagnostics.maxWorldColumnsAt = new Date().toISOString();
+      this.diagnostics.maxWorldColumnsAt = getTimestamp();
     }
     return count;
   }
@@ -1263,7 +1263,7 @@ class BotRuntime {
       id: this.config.id,
       username: this.config.username,
       reason,
-      endedAt: this.lastEndAt || new Date().toISOString(),
+      endedAt: this.lastEndAt || getTimestamp(),
       connectionCount: this.diagnostics.connectionCount,
       currentConnectionStartedAt: this.diagnostics.currentConnectionStartedAt,
       columnsAtEnd: countObjectKeys(columns),
@@ -1926,7 +1926,7 @@ class BotRuntime {
     this.clearStartupWarningTimer();
     this.clearOpenAuthRequestWatchdog();
     const wasStarting = this.state === 'starting';
-    this.lastEndAt = new Date().toISOString();
+    this.lastEndAt = getTimestamp();
     this.diagnostics.currentConnectionEndedAt = this.lastEndAt;
     const endedBot = this.bot;
     this.rememberEndedBotForDiagnostics(endedBot, 'end');
@@ -2151,7 +2151,7 @@ class BotRuntime {
     }
 
     const delayMs = this.legacyAutoRestartMinutes * 60 * 1000;
-    this.legacyAutoRestartScheduledAt = new Date(Date.now() + delayMs).toISOString();
+    this.legacyAutoRestartScheduledAt = getTimestamp(new Date(Date.now() + delayMs));
     this.legacyAutoRestartTimer = setTimeout(() => {
       this.legacyAutoRestartTimer = null;
       this.legacyAutoRestartScheduledAt = null;
@@ -2234,7 +2234,7 @@ class BotRuntime {
     this.pendingRestartReason = reason;
     this.pendingRestartDelayOverrideMs = null;
     this.pendingRestartDelayMs = schedule.totalDelayMs;
-    this.pendingRestartScheduledAt = new Date(Date.now() + schedule.totalDelayMs).toISOString();
+    this.pendingRestartScheduledAt = getTimestamp(new Date(Date.now() + schedule.totalDelayMs));
     this.publishStatus();
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_RESTART_SCHEDULED, {
       reason,
@@ -2279,7 +2279,7 @@ class BotRuntime {
     }
 
     this.lastFailure = parts.length > 0 ? parts.join(' | ') : null;
-    this.lastFailureAt = this.lastFailure ? new Date().toISOString() : null;
+    this.lastFailureAt = this.lastFailure ? getTimestamp() : null;
   }
 
   async executeCommand(content, context) {

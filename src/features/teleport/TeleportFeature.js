@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { getTimestamp } = require('../../util/time');
 
 class TeleportFeature {
   constructor(options = {}) {
@@ -77,7 +78,7 @@ class TeleportFeature {
 
   refreshWhitelist() {
     this.whitelistEntries = this.readWhitelistFile();
-    this.whitelistLoadedAt = new Date().toISOString();
+    this.whitelistLoadedAt = getTimestamp();
 
     if (this.logger) {
       this.logger.info(`[TPA] whitelist refreshed count=${this.whitelistEntries.length}`);

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { getTimestamp } = require('../../util/time');
 
 function normalizePlayerName(value) {
   return String(value || '').trim();
@@ -70,7 +71,7 @@ class TrustedPlayersStore {
     this.entries = this.mergeParentTrustedPlayers
       ? mergePlayerLists(this.staticTrustedPlayers, this.fileTrustedPlayers)
       : mergePlayerLists(this.staticTrustedPlayers);
-    this.loadedAt = new Date().toISOString();
+    this.loadedAt = getTimestamp();
 
     if (this.logger && this.getTrustedPlayersFilePath()) {
       this.logger.info(

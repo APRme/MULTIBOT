@@ -13,7 +13,7 @@ const { AggregateLogService } = require('../logging/AggregateLogService');
 const { ApiAccessLogService } = require('../logging/ApiAccessLogService');
 const { InstanceLifecycleLogService, LIFECYCLE_EVENTS } = require('../logging/InstanceLifecycleLogService');
 
-const MULTIBOT_VERSION = 'V26.4.17-Lightweight';
+const MULTIBOT_VERSION = 'V26.4.18-Lightweight';
 
 class MultibotApp {
   constructor(options = {}) {

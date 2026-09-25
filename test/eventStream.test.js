@@ -64,6 +64,7 @@ test('EventStream exposes session info and filters per client', () => {
   assert.equal(typeof sessionInfo.sessionId, 'string');
   assert.ok(sessionInfo.sessionId.length > 0);
   assert.equal(typeof sessionInfo.startedAt, 'string');
+  assert.match(sessionInfo.startedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
 
   stream.addClient(req, res, createClientOptions({
     eventFilter(event, data) {

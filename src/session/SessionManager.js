@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { getTimestamp } = require('../util/time');
 
 class SessionManager {
   constructor(sessionsDir = './sessions') {
@@ -66,7 +67,7 @@ class SessionManager {
       const sessionData = {
         ...session,
         _metadata: {
-          savedAt: new Date().toISOString(),
+          savedAt: getTimestamp(),
           email
         }
       };

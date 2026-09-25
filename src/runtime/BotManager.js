@@ -2,6 +2,7 @@ const { BotRuntime } = require('./BotRuntime');
 const { BroadcastService } = require('../control/BroadcastService');
 const { ChatConsoleCoordinator } = require('../logging/ChatConsoleCoordinator');
 const { BarkNotifier } = require('../notifications/bark/BarkNotifier');
+const { getTimestamp } = require('../util/time');
 
 const DEFAULT_CONSOLE_COMMAND_PREFIX = '/';
 
@@ -247,7 +248,7 @@ class BotManager {
     });
 
     return {
-      timestamp: new Date().toISOString(),
+      timestamp: getTimestamp(),
       pid: process.pid,
       memory: {
         rssMB: toMb(memoryUsage.rss),

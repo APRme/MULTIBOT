@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { getTimestamp } = require('../util/time');
 
 function createSessionId() {
   if (typeof crypto.randomUUID === 'function') {
@@ -80,7 +81,7 @@ class EventStream {
       : 1024 * 1024;
     this.sequence = 0;
     this.sessionId = createSessionId();
-    this.startedAt = new Date().toISOString();
+    this.startedAt = getTimestamp();
   }
 
   getSessionInfo() {

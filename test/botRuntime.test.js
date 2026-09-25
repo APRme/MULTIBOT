@@ -1159,6 +1159,23 @@ test('BotRuntime summarizes kick and error failures for status output', () => {
   runtime.clearRestartTimer();
 });
 
+test('BotRuntime failure and restart timestamps use local offset form (no UTC Z)', () => {
+  const runtime = createRuntime();
+
+  runtime.handleError(new Error('ForbiddenOperationException'));
+  runtime.refreshFailureState();
+
+  const offsetForm = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/;
+  assert.match(runtime.lastFailureAt, offsetForm);
+  assert.equal(runtime.lastFailureAt.endsWith('Z'), false);
+
+  runtime.scheduleRestart('retryable_error', 1000);
+  assert.match(runtime.pendingRestartScheduledAt, offsetForm);
+  assert.equal(runtime.pendingRestartScheduledAt.endsWith('Z'), false);
+
+  runtime.clearRestartTimer();
+});
+
 test('BotRuntime denies resource packs by default', () => {
   const runtime = createRuntime();
   const writes = [];
