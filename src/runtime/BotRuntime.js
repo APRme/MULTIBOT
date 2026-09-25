@@ -2059,9 +2059,11 @@ class BotRuntime {
     const account = this.config.email || this.config.username || 'unknown';
     const body = `${this.config.id} (${account}) @ ${this.config.host} 认证403, 已清 xbl 缓存并安排重试`;
 
-    this.barkNotifier.notify({ title: 'MULTIBOT Downdetector', body })
-      .then((ok) => {
-        this.logger.info(`[NOTIFY] bark 403 push ${ok ? 'ok' : 'fail'} bot=${this.config.id}`);
+    this.barkNotifier.notify({ title: 'MULTIBOT Downdetector', body, label: this.config.id })
+      .then((result) => {
+        const ok = result && result.ok === true;
+        const reason = !ok && result && result.reason ? ` reason=${result.reason}` : '';
+        this.logger.info(`[NOTIFY] bark 403 push ${ok ? 'ok' : 'fail'}${reason} bot=${this.config.id}`);
       })
       .catch(() => {
         this.logger.warn(`[NOTIFY] bark 403 push error bot=${this.config.id}`);

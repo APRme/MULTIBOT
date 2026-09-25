@@ -110,6 +110,37 @@ function New-RandomIv {
   -join ($buf | ForEach-Object { $chars[$_ % $chars.Length] })
 }
 
+# 失败原因分类(脱敏): 只返回分类标签, 绝不回显异常原文(可能含 URL/路径前缀等秘密)
+function Get-BarkFailureReason([object]$err) {
+  $ex = $err.Exception
+  if (-not $ex) { return 'unknown' }
+
+  if ($ex -is [System.Net.WebException]) {
+    if ($ex.Status -eq [System.Net.WebExceptionStatus]::Timeout) { return 'timeout' }
+    $resp = $ex.Response
+    if ($resp -and $resp.StatusCode) { return "http-$([int]$resp.StatusCode)" }
+    switch ($ex.Status) {
+      'NameResolutionFailure' { return 'dns-fail' }
+      'ConnectFailure'        { return 'connect-fail' }
+      'TrustFailure'          { return 'tls-fail' }
+      'SecureChannelFailure'  { return 'tls-fail' }
+      default                 { return 'web-' + $ex.Status.ToString().ToLower() }
+    }
+  }
+
+  if ($ex.GetType().Name -match 'HttpResponse') {
+    $sc = $ex.Response.StatusCode
+    if ($sc) { return "http-$([int]$sc)" }
+  }
+
+  $msg = [string]$ex.Message
+  if ($msg -match 'timed out|timeout|超时') { return 'timeout' }
+  if ($msg -match 'SSL|TLS|trust|certificate') { return 'tls-fail' }
+  if ($msg -match 'name or service|resolve|no such host|无法解析') { return 'dns-fail' }
+  if ($msg -match 'refused|unreachable|network') { return 'connect-fail' }
+  return 'unknown'
+}
+
 function ConvertTo-BarkCipher([string]$plainJson) {
   $aes = [Security.Cryptography.Aes]::Create()
   $aes.Mode    = [Security.Cryptography.CipherMode]::CBC
@@ -168,16 +199,20 @@ function Send-Bark {
     return
   }
 
+  $sw = [Diagnostics.Stopwatch]::StartNew()
   try {
     $r = Invoke-RestMethod -Uri "$($cfg.BARK_URL)/push" -Method Post `
            -Headers @{ Authorization = $auth } `
            -ContentType 'application/json; charset=utf-8' `
            -Body ([Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 20
-    Write-Host "[OK/https] sound=$tag  crypto=$CryptoLabel  code=$($r.code)  $($r.message)" -ForegroundColor Green
+    $sw.Stop()
+    Write-Host ("[OK/https] sound=$tag  crypto=$CryptoLabel  code=$($r.code)  $($r.message)  elapsed={0:N1}s" -f $sw.Elapsed.TotalSeconds) -ForegroundColor Green
     return
   } catch {
-    Write-Host "[FAIL]     sound=$tag  crypto=$CryptoLabel" -ForegroundColor Red
-    Write-Host "           https: $($_.Exception.Message)" -ForegroundColor DarkRed
+    $sw.Stop()
+    # 只输出脱敏分类与耗时, 不回显异常原文(可能含 URL/前缀)
+    $reason = Get-BarkFailureReason $_
+    Write-Host ("[FAIL] reason={0} elapsed={1:N1}s sound=$tag crypto=$CryptoLabel" -f $reason, $sw.Elapsed.TotalSeconds) -ForegroundColor Red
   }
 }
 

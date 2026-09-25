@@ -1,16 +1,20 @@
 // Bark 推送封装: 调用 src/notifications/bark/bark-push.ps1 发送手机通知。
 // 设计约束:
 //  - 密钥只存在于 .env, 由 PowerShell 脚本自行读取; Node 侧不解析/不记录任何凭据
-//  - 脚本输出可能包含 URL/前缀等秘密(失败信息), 故只提取 [OK/...]/[FAIL] 状态关键字,
-//    绝不把脚本 stdout/stderr 原文写入日志
+//  - 脚本输出可能包含 URL/前缀等秘密(异常原文), 故只提取 [OK/...]/[FAIL] 与脱敏的
+//    reason=<分类> / elapsed, 绝不把脚本 stdout/stderr 原文写入日志
+//  - 每次尝试(成功/失败)追加一行到 logs/bark.log(同样只含 label/reason/elapsed, 无秘密)
+const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { getTimestamp } = require('../../util/time');
 
 const DEFAULT_SCRIPT_PATH = './src/notifications/bark/bark-push.ps1';
 const DEFAULT_ENV_PATH = './.env';
 const DEFAULT_GROUP = 'mc';
 const DEFAULT_COOLDOWN_MS = 600000;
 const DEFAULT_TIMEOUT_MS = 25000;
+const DEFAULT_LOG_PATH = './logs/bark.log';
 const MAX_CAPTURED_OUTPUT = 8192;
 
 class BarkNotifier {
@@ -36,6 +40,10 @@ class BarkNotifier {
     return path.isAbsolute(raw) ? raw : path.resolve(this.appRoot, raw);
   }
 
+  resolveLogPath() {
+    return this.resolvePath(this.config.logPath, DEFAULT_LOG_PATH);
+  }
+
   log(level, message) {
     if (!this.logger || typeof this.logger[level] !== 'function') {
       return;
@@ -43,17 +51,33 @@ class BarkNotifier {
     this.logger[level](message);
   }
 
-  // 返回 Promise<boolean>: true = 脚本报告 [OK/https]; false = 未启用/平台不支持/失败
-  notify({ title, body, group } = {}) {
+  // 追加一行到 logs/bark.log: 仅含时间戳/结果/label/reason(分类)/耗时, 绝不含凭据
+  appendLog(line) {
+    try {
+      const filePath = this.resolveLogPath();
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.appendFileSync(filePath, `${line}\n`, 'utf8');
+    } catch (error) {
+      // 落盘失败不影响推送主流程
+    }
+  }
+
+  // 返回 Promise<{ ok, reason, elapsedMs }>
+  //  reason: null(成功) | 脚本给出的脱敏分类(timeout/http-401/tls-fail/...) |
+  //          disabled | non-windows | spawn-error | wrapper-timeout | unknown
+  notify({ title, body, group, label } = {}) {
+    const startedAt = Date.now();
+    const labelText = label || '-';
+
     return new Promise((resolve) => {
       if (!this.isEnabled()) {
-        resolve(false);
+        resolve({ ok: false, reason: 'disabled', elapsedMs: 0 });
         return;
       }
 
       if (this.platform !== 'win32') {
         this.log('info', '[NOTIFY] bark push skipped (non-windows platform)');
-        resolve(false);
+        resolve({ ok: false, reason: 'non-windows', elapsedMs: 0 });
         return;
       }
 
@@ -76,13 +100,15 @@ class BarkNotifier {
           stdio: ['ignore', 'pipe', 'pipe']
         });
       } catch (error) {
+        const elapsedMs = Date.now() - startedAt;
         this.log('warn', `[NOTIFY] bark push spawn failed: ${error && error.message ? error.message : error}`);
-        resolve(false);
+        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=spawn-error elapsed=${elapsedMs}ms`);
+        resolve({ ok: false, reason: 'spawn-error', elapsedMs });
         return;
       }
 
       if (!child || typeof child.on !== 'function') {
-        resolve(false);
+        resolve({ ok: false, reason: 'spawn-error', elapsedMs: Date.now() - startedAt });
         return;
       }
 
@@ -99,28 +125,39 @@ class BarkNotifier {
       if (child.stderr && typeof child.stderr.on === 'function') child.stderr.on('data', capture);
 
       let settled = false;
-      const finish = (value) => {
+      const finish = (result) => {
         if (settled) return;
         settled = true;
-        resolve(value);
+        resolve(result);
       };
 
       const timer = setTimeout(() => {
         try { child.kill(); } catch (error) { /* ignore */ }
+        const elapsedMs = Date.now() - startedAt;
         this.log('warn', '[NOTIFY] bark push timed out');
-        finish(false);
+        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=wrapper-timeout elapsed=${elapsedMs}ms`);
+        finish({ ok: false, reason: 'wrapper-timeout', elapsedMs });
       }, timeoutMs);
 
       child.on('error', (error) => {
         clearTimeout(timer);
+        const elapsedMs = Date.now() - startedAt;
         this.log('warn', `[NOTIFY] bark push error: ${error && error.message ? error.message : error}`);
-        finish(false);
+        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=spawn-error elapsed=${elapsedMs}ms`);
+        finish({ ok: false, reason: 'spawn-error', elapsedMs });
       });
 
       child.on('close', () => {
         clearTimeout(timer);
-        // 只取状态关键字, 不记录脚本输出原文(可能含 URL 前缀等秘密)
-        finish(/\[OK\//.test(output));
+        const elapsedMs = Date.now() - startedAt;
+        const ok = /\[OK\//.test(output);
+        // 只取脚本给出的脱敏分类, 不记录脚本输出原文(可能含 URL 前缀等秘密)
+        const reasonMatch = output.match(/reason=([a-z0-9-]+)/i);
+        const reason = ok ? null : (reasonMatch ? reasonMatch[1].toLowerCase() : 'unknown');
+        this.appendLog(
+          `${getTimestamp()} [${ok ? 'OK' : 'FAIL'}] label=${labelText}${ok ? '' : ` reason=${reason}`} elapsed=${elapsedMs}ms`
+        );
+        finish({ ok, reason, elapsedMs });
       });
     });
   }
@@ -132,5 +169,6 @@ module.exports = {
   DEFAULT_ENV_PATH,
   DEFAULT_GROUP,
   DEFAULT_COOLDOWN_MS,
-  DEFAULT_TIMEOUT_MS
+  DEFAULT_TIMEOUT_MS,
+  DEFAULT_LOG_PATH
 };

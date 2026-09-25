@@ -1293,6 +1293,7 @@ test('normalizeNotificationsConfig defaults bark to disabled with safe paths', (
   assert.equal(defaults.bark.scriptPath, './src/notifications/bark/bark-push.ps1');
   assert.equal(defaults.bark.envPath, './.env');
   assert.equal(defaults.bark.group, 'mc');
+  assert.equal(defaults.bark.logPath, './logs/bark.log');
   assert.equal(defaults.bark.cooldownMs, 600000);
   assert.equal(defaults.bark.timeoutMs, 25000);
 });
@@ -1304,6 +1305,7 @@ test('normalizeNotificationsConfig honors overrides and explicit zero cooldown',
       scriptPath: '/opt/bark/bark-push.ps1',
       envPath: '/opt/bark/.env',
       group: 'ops',
+      logPath: '/opt/bark/logs/bark.log',
       cooldownMs: 0,
       timeoutMs: 8000
     }
@@ -1313,6 +1315,7 @@ test('normalizeNotificationsConfig honors overrides and explicit zero cooldown',
   assert.equal(config.bark.scriptPath, '/opt/bark/bark-push.ps1');
   assert.equal(config.bark.envPath, '/opt/bark/.env');
   assert.equal(config.bark.group, 'ops');
+  assert.equal(config.bark.logPath, '/opt/bark/logs/bark.log');
   assert.equal(config.bark.cooldownMs, 0);
   assert.equal(config.bark.timeoutMs, 8000);
 });

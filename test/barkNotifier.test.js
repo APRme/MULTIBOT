@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { BarkNotifier } = require('../src/notifications/bark/BarkNotifier');
@@ -18,72 +20,122 @@ function makeFakeChild() {
 function createNotifier(config, hooks = {}) {
   const calls = [];
   const child = hooks.child || makeFakeChild();
+  const appRoot = hooks.appRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-bark-'));
   const notifier = new BarkNotifier({
     config,
-    appRoot: hooks.appRoot || 'C:\\multibot',
+    appRoot,
     platform: hooks.platform || 'win32',
     spawnFn: (command, args, options) => {
       calls.push({ command, args, options });
       return child;
     }
   });
-  return { notifier, calls, child };
+  return { notifier, calls, child, appRoot };
+}
+
+function readBarkLog(appRoot, logPath = './logs/bark.log') {
+  const filePath = path.isAbsolute(logPath) ? logPath : path.join(appRoot, logPath);
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
 test('BarkNotifier does not spawn when disabled', async () => {
-  const { notifier, calls } = createNotifier({ enabled: false });
+  const { notifier, calls, appRoot } = createNotifier({ enabled: false });
   assert.equal(notifier.isEnabled(), false);
-  assert.equal(await notifier.notify({ title: 't', body: 'b' }), false);
+  const result = await notifier.notify({ title: 't', body: 'b', label: 'alpha' });
+  assert.deepEqual(result, { ok: false, reason: 'disabled', elapsedMs: 0 });
   assert.equal(calls.length, 0);
+  assert.equal(readBarkLog(appRoot), '');
 });
 
 test('BarkNotifier skips on non-windows platform', async () => {
   const { notifier, calls } = createNotifier({ enabled: true }, { platform: 'linux' });
-  assert.equal(await notifier.notify({ title: 't', body: 'b' }), false);
+  const result = await notifier.notify({ title: 't', body: 'b', label: 'alpha' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'non-windows');
   assert.equal(calls.length, 0);
 });
 
-test('BarkNotifier spawns powershell with resolved paths and reports ok on [OK/', async () => {
-  const appRoot = 'C:\\multibot';
-  const { notifier, calls, child } = createNotifier({
+test('BarkNotifier spawns powershell with resolved paths and logs OK line', async () => {
+  const { notifier, calls, child, appRoot } = createNotifier({
     enabled: true,
     scriptPath: './src/notifications/bark/bark-push.ps1',
     envPath: './.env',
     group: 'mc',
     timeoutMs: 5000
-  }, { appRoot });
+  });
 
-  const pending = notifier.notify({ title: 'MULTIBOT Downdetector', body: 'alpha 认证403' });
+  const pending = notifier.notify({ title: 'MULTIBOT Downdetector', body: 'alpha 认证403', label: 'alpha' });
   await new Promise((resolve) => setImmediate(resolve));
-  child.stdout.emit('data', '[OK/https] sound= crypto= code=200 success');
+  child.stdout.emit('data', '[OK/https] sound= crypto= code=200 success elapsed=0.5s');
   child.emit('close', 0);
-  assert.equal(await pending, true);
+  const result = await pending;
 
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, 'powershell.exe');
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, null);
+  assert.ok(Number.isInteger(result.elapsedMs));
+
   const args = calls[0].args;
+  assert.equal(calls[0].command, 'powershell.exe');
   assert.equal(args[args.indexOf('-File') + 1], path.resolve(appRoot, './src/notifications/bark/bark-push.ps1'));
   assert.equal(args[args.indexOf('-EnvPath') + 1], path.resolve(appRoot, './.env'));
   assert.equal(args[args.indexOf('-Title') + 1], 'MULTIBOT Downdetector');
   assert.equal(args[args.indexOf('-Body') + 1], 'alpha 认证403');
   assert.equal(args[args.indexOf('-Group') + 1], 'mc');
   assert.equal(calls[0].options.windowsHide, true);
+
+  const log = readBarkLog(appRoot);
+  assert.match(log, /\[OK\] label=alpha elapsed=\d+ms/);
 });
 
-test('BarkNotifier reports failure on [FAIL] output', async () => {
-  const { notifier, child } = createNotifier({ enabled: true, timeoutMs: 5000 });
-  const pending = notifier.notify({ title: 't', body: 'b' });
+test('BarkNotifier parses desensitized failure reason and writes bark.log', async () => {
+  const { notifier, child, appRoot } = createNotifier({ enabled: true, timeoutMs: 5000 });
+  const pending = notifier.notify({ title: 't', body: 'b', label: 'APR_m' });
   await new Promise((resolve) => setImmediate(resolve));
-  child.stdout.emit('data', '[FAIL]     sound= crypto= ');
+  child.stdout.emit('data', '[FAIL] reason=timeout elapsed=20.0s sound= crypto=');
   child.emit('close', 0);
-  assert.equal(await pending, false);
+  const result = await pending;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'timeout');
+  assert.match(readBarkLog(appRoot), /\[FAIL\] label=APR_m reason=timeout elapsed=\d+ms/);
 });
 
-test('BarkNotifier kills child and resolves false on timeout', async () => {
-  const { notifier, child } = createNotifier({ enabled: true, timeoutMs: 10 });
-  const pending = notifier.notify({ title: 't', body: 'b' });
-  assert.equal(await pending, false);
+test('BarkNotifier falls back to unknown reason when script gives none', async () => {
+  const { notifier, child, appRoot } = createNotifier({ enabled: true, timeoutMs: 5000 });
+  const pending = notifier.notify({ title: 't', body: 'b', label: 'beta' });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.stdout.emit('data', '[FAIL] something broke');
+  child.emit('close', 0);
+  const result = await pending;
+
+  assert.equal(result.reason, 'unknown');
+  assert.match(readBarkLog(appRoot), /reason=unknown/);
+});
+
+test('BarkNotifier kills child and records wrapper-timeout', async () => {
+  const { notifier, child, appRoot } = createNotifier({ enabled: true, timeoutMs: 10 });
+  const result = await notifier.notify({ title: 't', body: 'b', label: 'gamma' });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'wrapper-timeout');
   assert.equal(child.killed, true);
+  assert.match(readBarkLog(appRoot), /reason=wrapper-timeout/);
+});
+
+test('BarkNotifier honors custom logPath', async () => {
+  const { notifier, child, appRoot } = createNotifier({
+    enabled: true,
+    timeoutMs: 5000,
+    logPath: './custom/bark-custom.log'
+  });
+  const pending = notifier.notify({ title: 't', body: 'b', label: 'delta' });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.stdout.emit('data', '[OK/https] code=200');
+  child.emit('close', 0);
+  await pending;
+
+  assert.match(readBarkLog(appRoot, './custom/bark-custom.log'), /\[OK\] label=delta/);
+  assert.equal(readBarkLog(appRoot, './logs/bark.log'), '');
 });
 
 test('BarkNotifier getCooldownMs falls back to default and honors zero', () => {

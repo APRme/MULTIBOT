@@ -1913,7 +1913,7 @@ test('BotRuntime resetAuthCache is safe without existing cache directory', () =>
   assert.doesNotThrow(() => runtime.resetAuthCache('xbl'));
 });
 
-test('BotRuntime pushes bark notification on prismarine-auth xbox 403 with cooldown', () => {
+test('BotRuntime pushes bark notification on prismarine-auth xbox 403 with cooldown', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-bark-'));
   const notifications = [];
   const notifier = {
@@ -1921,7 +1921,7 @@ test('BotRuntime pushes bark notification on prismarine-auth xbox 403 with coold
     getCooldownMs: () => 600000,
     notify(payload) {
       notifications.push(payload);
-      return Promise.resolve(true);
+      return Promise.resolve({ ok: true, reason: null, elapsedMs: 12 });
     }
   };
   const runtime = createRuntime({
@@ -1935,12 +1935,41 @@ test('BotRuntime pushes bark notification on prismarine-auth xbox 403 with coold
     // 真实流程: 403 后进入 waiting_restart, 冷却期内重试再次进入开始阶段并又遇 403
     runtime.state = 'starting';
     runtime.handleError(makeXbox403Error());
+    await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(notifications.length, 1, 'only one push within cooldown');
     assert.equal(notifications[0].title, 'MULTIBOT Downdetector');
     assert.match(notifications[0].body, /alpha/);
     assert.match(notifications[0].body, /认证403/);
     assert.ok(runtime.logger.getRecent().some((entry) => entry.message.includes('bark 403 push skipped (cooldown)')));
+    assert.ok(runtime.logger.getRecent().some((entry) => entry.message.includes('bark 403 push ok')));
+  } finally {
+    runtime.clearRestartTimer();
+  }
+});
+
+test('BotRuntime logs desensitized bark failure reason', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-bark-fail-'));
+  const notifier = {
+    isEnabled: () => true,
+    getCooldownMs: () => 600000,
+    notify() {
+      return Promise.resolve({ ok: false, reason: 'timeout', elapsedMs: 20030 });
+    }
+  };
+  const runtime = createRuntime({
+    config: { paths: createAuthPaths(tempDir) },
+    barkNotifier: notifier
+  });
+  runtime.state = 'starting';
+
+  try {
+    runtime.handleError(makeXbox403Error());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.ok(runtime.logger.getRecent().some((entry) => {
+      return entry.message.includes('bark 403 push fail reason=timeout');
+    }));
   } finally {
     runtime.clearRestartTimer();
   }

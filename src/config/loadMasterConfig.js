@@ -388,6 +388,9 @@ function normalizeNotificationsConfig(rawConfig) {
       group: typeof bark.group === 'string' && bark.group.trim()
         ? bark.group.trim()
         : 'mc',
+      logPath: typeof bark.logPath === 'string' && bark.logPath.trim()
+        ? bark.logPath.trim()
+        : './logs/bark.log',
       cooldownMs: normalizeNonNegativeInteger(bark.cooldownMs, 600000),
       timeoutMs: normalizePositiveInteger(bark.timeoutMs, 25000)
     }
