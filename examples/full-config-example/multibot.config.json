@@ -48,7 +48,8 @@
       "group": "mc",
       "logPath": "./logs/bark.log",
       "cooldownMs": 600000,
-      "timeoutMs": 25000
+      "timeoutMs": 25000,
+      "retryOnce": false
     }
   },
   "defaults": {

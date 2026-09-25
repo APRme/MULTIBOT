@@ -392,7 +392,8 @@ function normalizeNotificationsConfig(rawConfig) {
         ? bark.logPath.trim()
         : './logs/bark.log',
       cooldownMs: normalizeNonNegativeInteger(bark.cooldownMs, 600000),
-      timeoutMs: normalizePositiveInteger(bark.timeoutMs, 25000)
+      timeoutMs: normalizePositiveInteger(bark.timeoutMs, 25000),
+      retryOnce: bark.retryOnce === true
     }
   };
 }

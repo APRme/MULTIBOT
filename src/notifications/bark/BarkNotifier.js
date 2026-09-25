@@ -4,10 +4,11 @@
 //  - 脚本输出可能包含 URL/前缀等秘密(异常原文), 故只提取 [OK/...]/[FAIL] 与脱敏的
 //    reason=<分类> / elapsed, 绝不把脚本 stdout/stderr 原文写入日志
 //  - 每次尝试(成功/失败)追加一行到 logs/bark.log(同样只含 label/reason/elapsed, 无秘密)
+//  - 可选 retryOnce: 首次失败后等待 retryDelayMs 再重发一次(共 2 次), 每次尝试各记一行
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { getTimestamp } = require('../../util/time');
+const { getTimestamp, sleep } = require('../../util/time');
 
 const DEFAULT_SCRIPT_PATH = './src/notifications/bark/bark-push.ps1';
 const DEFAULT_ENV_PATH = './.env';
@@ -15,6 +16,7 @@ const DEFAULT_GROUP = 'mc';
 const DEFAULT_COOLDOWN_MS = 600000;
 const DEFAULT_TIMEOUT_MS = 25000;
 const DEFAULT_LOG_PATH = './logs/bark.log';
+const DEFAULT_RETRY_DELAY_MS = 2000;
 const MAX_CAPTURED_OUTPUT = 8192;
 
 class BarkNotifier {
@@ -24,10 +26,25 @@ class BarkNotifier {
     this.appRoot = options.appRoot || process.cwd();
     this.spawnFn = typeof options.spawnFn === 'function' ? options.spawnFn : spawn;
     this.platform = options.platform || process.platform;
+    this.retryDelayMs = options.retryDelayMs;
   }
 
   isEnabled() {
     return this.config.enabled === true;
+  }
+
+  // 仅当 notifications.bark.retryOnce=true 时, 失败后允许再重发一次(最多 2 次尝试)
+  isRetryOnceEnabled() {
+    return this.config.retryOnce === true;
+  }
+
+  getMaxAttempts() {
+    return this.isRetryOnceEnabled() ? 2 : 1;
+  }
+
+  getRetryDelayMs() {
+    const value = Number(this.retryDelayMs);
+    return Number.isFinite(value) && value >= 0 ? value : DEFAULT_RETRY_DELAY_MS;
   }
 
   getCooldownMs() {
@@ -65,22 +82,46 @@ class BarkNotifier {
   // 返回 Promise<{ ok, reason, elapsedMs }>
   //  reason: null(成功) | 脚本给出的脱敏分类(timeout/http-401/tls-fail/...) |
   //          disabled | non-windows | spawn-error | wrapper-timeout | unknown
+  // retryOnce=true 时首次失败会等待 getRetryDelayMs() 后重发一次(最多 2 次), 返回最后一次结果
   notify({ title, body, group, label } = {}) {
-    const startedAt = Date.now();
     const labelText = label || '-';
 
+    if (!this.isEnabled()) {
+      return Promise.resolve({ ok: false, reason: 'disabled', elapsedMs: 0 });
+    }
+
+    if (this.platform !== 'win32') {
+      this.log('info', '[NOTIFY] bark push skipped (non-windows platform)');
+      return Promise.resolve({ ok: false, reason: 'non-windows', elapsedMs: 0 });
+    }
+
+    const maxAttempts = this.getMaxAttempts();
+
+    const run = async () => {
+      let result = null;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        result = await this.attemptPush({ title, body, group, label: labelText, attempt, maxAttempts });
+        if (result.ok || attempt >= maxAttempts) {
+          break;
+        }
+        this.log('warn', `[NOTIFY] bark push retry scheduled attempt=${attempt + 1}/${maxAttempts} reason=${result.reason}`);
+        await sleep(this.getRetryDelayMs());
+      }
+
+      return result;
+    };
+
+    return run();
+  }
+
+  // 单次推送尝试
+  attemptPush({ title, body, group, label, attempt, maxAttempts } = {}) {
+    const startedAt = Date.now();
+    const labelText = label || '-';
+    const attemptSuffix = maxAttempts > 1 ? ` attempt=${attempt}/${maxAttempts}` : '';
+
     return new Promise((resolve) => {
-      if (!this.isEnabled()) {
-        resolve({ ok: false, reason: 'disabled', elapsedMs: 0 });
-        return;
-      }
-
-      if (this.platform !== 'win32') {
-        this.log('info', '[NOTIFY] bark push skipped (non-windows platform)');
-        resolve({ ok: false, reason: 'non-windows', elapsedMs: 0 });
-        return;
-      }
-
       const scriptPath = this.resolvePath(this.config.scriptPath, DEFAULT_SCRIPT_PATH);
       const envPath = this.resolvePath(this.config.envPath, DEFAULT_ENV_PATH);
       const args = [
@@ -102,7 +143,7 @@ class BarkNotifier {
       } catch (error) {
         const elapsedMs = Date.now() - startedAt;
         this.log('warn', `[NOTIFY] bark push spawn failed: ${error && error.message ? error.message : error}`);
-        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=spawn-error elapsed=${elapsedMs}ms`);
+        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=spawn-error elapsed=${elapsedMs}ms${attemptSuffix}`);
         resolve({ ok: false, reason: 'spawn-error', elapsedMs });
         return;
       }
@@ -135,7 +176,7 @@ class BarkNotifier {
         try { child.kill(); } catch (error) { /* ignore */ }
         const elapsedMs = Date.now() - startedAt;
         this.log('warn', '[NOTIFY] bark push timed out');
-        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=wrapper-timeout elapsed=${elapsedMs}ms`);
+        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=wrapper-timeout elapsed=${elapsedMs}ms${attemptSuffix}`);
         finish({ ok: false, reason: 'wrapper-timeout', elapsedMs });
       }, timeoutMs);
 
@@ -143,7 +184,7 @@ class BarkNotifier {
         clearTimeout(timer);
         const elapsedMs = Date.now() - startedAt;
         this.log('warn', `[NOTIFY] bark push error: ${error && error.message ? error.message : error}`);
-        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=spawn-error elapsed=${elapsedMs}ms`);
+        this.appendLog(`${getTimestamp()} [FAIL] label=${labelText} reason=spawn-error elapsed=${elapsedMs}ms${attemptSuffix}`);
         finish({ ok: false, reason: 'spawn-error', elapsedMs });
       });
 
@@ -155,7 +196,7 @@ class BarkNotifier {
         const reasonMatch = output.match(/reason=([a-z0-9-]+)/i);
         const reason = ok ? null : (reasonMatch ? reasonMatch[1].toLowerCase() : 'unknown');
         this.appendLog(
-          `${getTimestamp()} [${ok ? 'OK' : 'FAIL'}] label=${labelText}${ok ? '' : ` reason=${reason}`} elapsed=${elapsedMs}ms`
+          `${getTimestamp()} [${ok ? 'OK' : 'FAIL'}] label=${labelText}${ok ? '' : ` reason=${reason}`} elapsed=${elapsedMs}ms${attemptSuffix}`
         );
         finish({ ok, reason, elapsedMs });
       });
@@ -170,5 +211,6 @@ module.exports = {
   DEFAULT_GROUP,
   DEFAULT_COOLDOWN_MS,
   DEFAULT_TIMEOUT_MS,
-  DEFAULT_LOG_PATH
+  DEFAULT_LOG_PATH,
+  DEFAULT_RETRY_DELAY_MS
 };

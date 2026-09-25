@@ -25,8 +25,12 @@ function createNotifier(config, hooks = {}) {
     config,
     appRoot,
     platform: hooks.platform || 'win32',
+    retryDelayMs: hooks.retryDelayMs,
     spawnFn: (command, args, options) => {
       calls.push({ command, args, options });
+      if (typeof hooks.spawnResults === 'function') {
+        return hooks.spawnResults(calls.length);
+      }
       return child;
     }
   });
@@ -147,4 +151,145 @@ test('BarkNotifier getCooldownMs falls back to default and honors zero', () => {
 
   const custom = createNotifier({ enabled: true, cooldownMs: 1000 }).notifier;
   assert.equal(custom.getCooldownMs(), 1000);
+});
+
+test('BarkNotifier does not retry when retryOnce is not enabled', async () => {
+  const children = [];
+  const { notifier, calls, appRoot } = createNotifier(
+    { enabled: true, timeoutMs: 5000 },
+    {
+      retryDelayMs: 1,
+      spawnResults: () => {
+        const child = makeFakeChild();
+        children.push(child);
+        return child;
+      }
+    }
+  );
+
+  const pending = notifier.notify({ title: 't', body: 'b', label: 'alpha' });
+  await new Promise((resolve) => setImmediate(resolve));
+  children[0].stdout.emit('data', '[FAIL] reason=timeout elapsed=20.0s');
+  children[0].emit('close', 0);
+  const result = await pending;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'timeout');
+  assert.equal(calls.length, 1);
+  assert.equal(notifier.getMaxAttempts(), 1);
+  const lines = readBarkLog(appRoot).trim().split('\n');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /\[FAIL\] label=alpha reason=timeout elapsed=\d+ms$/);
+});
+
+test('BarkNotifier retryOnce resends once after a failure and records both attempts', async () => {
+  const children = [];
+  const logs = [];
+  const { notifier, calls, appRoot } = createNotifier(
+    { enabled: true, timeoutMs: 5000, retryOnce: true },
+    {
+      retryDelayMs: 1,
+      spawnResults: () => {
+        const child = makeFakeChild();
+        children.push(child);
+        return child;
+      }
+    }
+  );
+  notifier.logger = {
+    info: (message) => logs.push(message),
+    warn: (message) => logs.push(message)
+  };
+
+  assert.equal(notifier.getMaxAttempts(), 2);
+
+  const pending = notifier.notify({ title: 't', body: 'b', label: 'APR_m' });
+  await new Promise((resolve) => setImmediate(resolve));
+  children[0].stdout.emit('data', '[FAIL] reason=timeout elapsed=20.0s');
+  children[0].emit('close', 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(calls.length, 2);
+  children[1].stdout.emit('data', '[OK/https] code=200 success elapsed=0.5s');
+  children[1].emit('close', 0);
+  const result = await pending;
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, null);
+  assert.ok(logs.some((message) => message.includes('[NOTIFY] bark push retry scheduled attempt=2/2 reason=timeout')));
+
+  const lines = readBarkLog(appRoot).trim().split('\n');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /\[FAIL\] label=APR_m reason=timeout elapsed=\d+ms attempt=1\/2$/);
+  assert.match(lines[1], /\[OK\] label=APR_m elapsed=\d+ms attempt=2\/2$/);
+});
+
+test('BarkNotifier retryOnce reports the last failure when both attempts fail', async () => {
+  const children = [];
+  const { notifier, calls, appRoot } = createNotifier(
+    { enabled: true, timeoutMs: 5000, retryOnce: true },
+    {
+      retryDelayMs: 1,
+      spawnResults: () => {
+        const child = makeFakeChild();
+        children.push(child);
+        return child;
+      }
+    }
+  );
+
+  const pending = notifier.notify({ title: 't', body: 'b', label: 'beta' });
+  await new Promise((resolve) => setImmediate(resolve));
+  children[0].stdout.emit('data', '[FAIL] reason=tls-fail elapsed=3.5s');
+  children[0].emit('close', 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(calls.length, 2);
+  children[1].stdout.emit('data', '[FAIL] reason=timeout elapsed=20.0s');
+  children[1].emit('close', 0);
+  const result = await pending;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'timeout');
+
+  const lines = readBarkLog(appRoot).trim().split('\n');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /\[FAIL\] label=beta reason=tls-fail elapsed=\d+ms attempt=1\/2$/);
+  assert.match(lines[1], /\[FAIL\] label=beta reason=timeout elapsed=\d+ms attempt=2\/2$/);
+});
+
+test('BarkNotifier retryOnce still spawns only once when the first attempt succeeds', async () => {
+  const children = [];
+  const { notifier, calls, appRoot } = createNotifier(
+    { enabled: true, timeoutMs: 5000, retryOnce: true },
+    {
+      retryDelayMs: 1,
+      spawnResults: () => {
+        const child = makeFakeChild();
+        children.push(child);
+        return child;
+      }
+    }
+  );
+
+  const pending = notifier.notify({ title: 't', body: 'b', label: 'gamma' });
+  await new Promise((resolve) => setImmediate(resolve));
+  children[0].stdout.emit('data', '[OK/https] code=200');
+  children[0].emit('close', 0);
+  const result = await pending;
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.match(readBarkLog(appRoot), /\[OK\] label=gamma elapsed=\d+ms attempt=1\/2/);
+});
+
+test('BarkNotifier retryOnce does not spawn at all when disabled', async () => {
+  const { notifier, calls, appRoot } = createNotifier({ enabled: false, retryOnce: true });
+  const result = await notifier.notify({ title: 't', body: 'b', label: 'alpha' });
+
+  assert.deepEqual(result, { ok: false, reason: 'disabled', elapsedMs: 0 });
+  assert.equal(calls.length, 0);
+  assert.equal(readBarkLog(appRoot), '');
 });

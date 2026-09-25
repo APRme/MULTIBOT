@@ -1296,6 +1296,7 @@ test('normalizeNotificationsConfig defaults bark to disabled with safe paths', (
   assert.equal(defaults.bark.logPath, './logs/bark.log');
   assert.equal(defaults.bark.cooldownMs, 600000);
   assert.equal(defaults.bark.timeoutMs, 25000);
+  assert.equal(defaults.bark.retryOnce, false);
 });
 
 test('normalizeNotificationsConfig honors overrides and explicit zero cooldown', () => {
@@ -1307,7 +1308,8 @@ test('normalizeNotificationsConfig honors overrides and explicit zero cooldown',
       group: 'ops',
       logPath: '/opt/bark/logs/bark.log',
       cooldownMs: 0,
-      timeoutMs: 8000
+      timeoutMs: 8000,
+      retryOnce: true
     }
   });
 
@@ -1318,5 +1320,12 @@ test('normalizeNotificationsConfig honors overrides and explicit zero cooldown',
   assert.equal(config.bark.logPath, '/opt/bark/logs/bark.log');
   assert.equal(config.bark.cooldownMs, 0);
   assert.equal(config.bark.timeoutMs, 8000);
+  assert.equal(config.bark.retryOnce, true);
+});
+
+test('normalizeNotificationsConfig only enables retryOnce for a strict boolean true', () => {
+  assert.equal(normalizeNotificationsConfig({ bark: { retryOnce: 'yes' } }).bark.retryOnce, false);
+  assert.equal(normalizeNotificationsConfig({ bark: { retryOnce: 1 } }).bark.retryOnce, false);
+  assert.equal(normalizeNotificationsConfig({ bark: { retryOnce: true } }).bark.retryOnce, true);
 });
 
