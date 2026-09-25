@@ -1,4 +1,7 @@
 const http = require('http');
+const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
+
+const MAX_TRACKED_AUTH_FAILURE_IPS = 500;
 
 class HttpApiServer {
   constructor(options = {}) {
@@ -8,6 +11,8 @@ class HttpApiServer {
     this.instanceService = options.instanceService || null;
     this.accessLogService = options.accessLogService || null;
     this.consoleConnectorConfig = options.consoleConnectorConfig || {};
+    this.barkNotifier = options.barkNotifier || null;
+    this.authFailureTrackers = new Map();
     this.server = null;
   }
 
@@ -59,6 +64,65 @@ class HttpApiServer {
     if (!this.server) return;
     await new Promise((resolve) => this.server.close(resolve));
     this.server = null;
+  }
+
+  getNotificationEventConfig(type) {
+    const events = this.botManager
+      && this.botManager.masterConfig
+      && this.botManager.masterConfig.notifications
+      ? this.botManager.masterConfig.notifications.events
+      : null;
+    const raw = events && events[type] ? events[type] : {};
+    return raw && typeof raw === 'object' ? raw : {};
+  }
+
+  // 取客户端 IP: nginx 反代时 socket.remoteAddress 恒为 127.0.0.1, 优先用 X-Forwarded-For 首段。
+  // 仅用于告警分组(不是访问控制), 因此被伪造也只影响分组。
+  getClientIp(req) {
+    const forwarded = req && req.headers ? req.headers['x-forwarded-for'] : null;
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+      return forwarded.split(',')[0].trim();
+    }
+    return (req && req.socket && req.socket.remoteAddress) || 'unknown';
+  }
+
+  // F1: 同一来源认证失败达到阈值 -> 推送(可能是爆破); 单次失败不打扰
+  trackAuthFailure(req) {
+    try {
+      const notifier = this.barkNotifier;
+      if (!notifier || typeof notifier.notifyEvent !== 'function') return;
+      if (typeof notifier.isEnabled === 'function' && !notifier.isEnabled()) return;
+
+      const config = this.getNotificationEventConfig('apiAuthFailure');
+      if (config.enabled === false) return;
+
+      const threshold = Number(config.threshold) > 0 ? Number(config.threshold) : 10;
+      const windowMs = Number(config.windowMs) > 0 ? Number(config.windowMs) : 600000;
+      const ip = this.getClientIp(req);
+
+      let tracker = this.authFailureTrackers.get(ip);
+      if (!tracker) {
+        if (this.authFailureTrackers.size >= MAX_TRACKED_AUTH_FAILURE_IPS) {
+          this.authFailureTrackers.clear();
+        }
+        tracker = new EventThresholdTracker({ threshold, windowMs });
+        this.authFailureTrackers.set(ip, tracker);
+      }
+
+      const { count, exceeded } = tracker.record();
+      if (!exceeded) return;
+
+      void Promise.resolve(notifier.notifyEvent({
+        type: 'apiAuthFailure',
+        key: `api:auth-fail:${ip}`,
+        severity: 'critical',
+        title: 'MULTIBOT Downdetector',
+        body: `控制端口 API 认证失败 ${count} 次/${Math.max(1, Math.round(windowMs / 60000))} 分钟, 来源 ${ip}`,
+        label: 'api'
+      })).catch(() => null);
+    } catch (error) {
+      // 通知不得影响请求处理
+    }
   }
 
   getHistoryLimit() {
@@ -124,6 +188,7 @@ class HttpApiServer {
 
     if (!this.isAuthorized(req)) {
       this.markOutcome(accessContext, 'unauthorized');
+      this.trackAuthFailure(req);
       this.json(res, 401, { error: 'unauthorized' });
       return;
     }

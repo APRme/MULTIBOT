@@ -141,6 +141,33 @@ const BACKEND_UNAVAILABLE_FRAGMENTS = [
   'an error occurred while connecting to the backend server:'
 ];
 
+// 需要"故障->恢复"配对的事件 key 前缀(key 完整形式为 <prefix>:<botId>)
+const BARK_BOT_EVENT_KEY_PREFIXES = [
+  'auth:device-code',
+  'auth:permanent',
+  'auth:refresh-token',
+  'auth:invalid-session',
+  'auth:rejected',
+  'bot:exhausted',
+  'bot:stuck'
+];
+
+// refresh_token 失效/需要交互登录(prismarine-auth / msal 常见文案) -> 需要人工重新登录
+const REFRESH_TOKEN_INVALID_FRAGMENTS = [
+  'invalid_grant',
+  'refresh token',
+  'aadsts'
+];
+
+// 账号被拒/被封(认证层) -> 重连无用, 需要人工处理
+const AUTH_REJECTED_FRAGMENTS = [
+  'you are banned',
+  'banned',
+  'account has been',
+  'invalid credentials',
+  'authentication failed'
+];
+
 function normalizeDisconnectText(value) {
   const parts = [];
   flattenMessageParts(value, parts);
@@ -357,6 +384,7 @@ class BotRuntime {
     this.openAuthRequestMissingRetryEligible = false;
     this.openAuthPermanentFailure = false;
     this.openAuthRequestWatchdogTimer = null;
+    this.invalidSessionRetryCount = 0;
     this.bot = null;
     this.state = 'stopped';
     this.desiredRunning = false;
@@ -620,9 +648,11 @@ class BotRuntime {
     this.spawnCount += 1;
     this.restartAttempt = 0;
     this.restartScheduleExhausted = false;
+    this.invalidSessionRetryCount = 0;
     this.lastSpawnAt = getTimestamp();
     this.logger.info('[BOT] spawn');
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_SPAWN, { detail: this.lastSpawnAt });
+    this.notifyBarkRecoveryForOnline();
     this.fishFeature.handleSpawn();
     this.scriptFeature.onSpawn();
     this.scheduleLegacyAutoRestart();
@@ -748,6 +778,12 @@ class BotRuntime {
     if (this.pendingAuthState) {
       this.pendingAuthState.deviceCodeIssued = true;
     }
+    this.notifyBarkEvent({
+      type: 'deviceCode',
+      key: `auth:device-code:${this.config.id}`,
+      severity: 'critical',
+      body: `${this.config.id} 需要设备码登录(Microsoft), 请查看控制台并尽快完成认证 @ ${this.config.host}`
+    });
   }
 
   handleResourcePack(bot, urlOrUuid, hashOrUuid) {
@@ -984,6 +1020,12 @@ class BotRuntime {
     this.lastError = `OpenAuth ${code}`;
     this.refreshFailureState();
     this.logger.error(`[AUTH][OpenAuth] stopped code=${code}`);
+    this.notifyBarkEvent({
+      type: 'openAuthPermanentFailure',
+      key: `auth:permanent:${this.config.id}`,
+      severity: 'critical',
+      body: `${this.config.id} OpenAuth 永久失败 code=${code}, 已停止重连, 需要人工处理 @ ${this.config.host}`
+    });
 
     if (!this.bot) {
       this.state = 'stopped';
@@ -1024,6 +1066,7 @@ class BotRuntime {
       ) {
         this.sessionService.delete(this.config.email);
       }
+      this.trackInvalidSessionRetry();
       this.requestRestart('invalid_session_retry', 1000);
       return;
     }
@@ -1992,6 +2035,7 @@ class BotRuntime {
       this.logger.warn(
         `[AUTH] cached session rejected; scheduling credential refresh sessionDeleted=${deleted === true}`
       );
+      this.trackInvalidSessionRetry();
       this.requestRestart('invalid_session_retry', 1000);
       return;
     }
@@ -2032,6 +2076,120 @@ class BotRuntime {
       this.requestRestart('auth_cache_reset', this.restartPolicy.getDelayMs());
       return;
     }
+
+    // refresh_token 失效 / 需要交互登录: 自动重连解决不了, 必须人工重新登录(只通知, 不改重启行为)
+    if (REFRESH_TOKEN_INVALID_FRAGMENTS.some((fragment) => lower.includes(fragment))) {
+      this.notifyBarkEvent({
+        type: 'refreshTokenInvalid',
+        key: `auth:refresh-token:${this.config.id}`,
+        severity: 'critical',
+        body: `${this.config.id} 登录凭据已失效(refresh token), 需要人工重新登录 @ ${this.config.host}`
+      });
+      return;
+    }
+
+    // 账号被拒/被封(认证层): 重连无用(只通知, 不改重启行为)
+    if (AUTH_REJECTED_FRAGMENTS.some((fragment) => lower.includes(fragment))) {
+      this.notifyBarkEvent({
+        type: 'authRejected',
+        key: `auth:rejected:${this.config.id}`,
+        severity: 'critical',
+        body: `${this.config.id} 账号被服务器/认证服务拒绝, 需要人工确认 @ ${this.config.host}`
+      });
+    }
+  }
+
+  // 事件推送统一入口: 全部吞掉异常, 绝不影响 bot 生命周期
+  notifyBarkEvent({ type, key, severity = 'active', body } = {}) {
+    try {
+      if (!this.barkNotifier || typeof this.barkNotifier.notifyEvent !== 'function') {
+        return null;
+      }
+      if (typeof this.barkNotifier.isEnabled === 'function' && !this.barkNotifier.isEnabled()) {
+        return null;
+      }
+
+      const promise = this.barkNotifier.notifyEvent({
+        type,
+        key: key || `${type}:${this.config.id}`,
+        severity,
+        title: 'MULTIBOT Downdetector',
+        body,
+        label: this.config.id
+      });
+
+      return promise && typeof promise.catch === 'function' ? promise.catch(() => null) : promise;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // 恢复在线后, 把本 bot 所有挂起的事件一并清掉: 只推一条"已恢复", 其余只清状态
+  notifyBarkRecoveryForOnline() {
+    try {
+      if (!this.barkNotifier || typeof this.barkNotifier.notifyRecovery !== 'function') {
+        return null;
+      }
+
+      const id = this.config.id;
+      const pendingKeys = BARK_BOT_EVENT_KEY_PREFIXES
+        .map((prefix) => `${prefix}:${id}`)
+        .filter((key) => typeof this.barkNotifier.hasPendingFailure === 'function'
+          && this.barkNotifier.hasPendingFailure(key));
+
+      if (pendingKeys.length === 0) {
+        return null;
+      }
+
+      const promise = this.barkNotifier.notifyRecovery({
+        type: 'botRecovered',
+        key: pendingKeys[0],
+        severity: 'active',
+        title: 'MULTIBOT Downdetector',
+        body: `${id} 已恢复在线 @ ${this.config.host}`,
+        label: id
+      });
+
+      const cleanup = () => {
+        pendingKeys.slice(1).forEach((key) => {
+          if (typeof this.barkNotifier.clearEventState === 'function') {
+            this.barkNotifier.clearEventState(key);
+          }
+        });
+        return null;
+      };
+
+      return promise && typeof promise.then === 'function'
+        ? promise.then(cleanup).catch(() => null)
+        : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  getNotificationEventConfig(type) {
+    if (this.barkNotifier && typeof this.barkNotifier.getEventConfig === 'function') {
+      return this.barkNotifier.getEventConfig(type);
+    }
+    return { enabled: false, cooldownMs: 0 };
+  }
+
+  // invalid_session 连续重试计数: 达到阈值才推(单次失败属于正常自愈流程, 不打扰)
+  trackInvalidSessionRetry() {
+    this.invalidSessionRetryCount = (this.invalidSessionRetryCount || 0) + 1;
+    const eventConfig = this.getNotificationEventConfig('invalidSession');
+    const threshold = Number(eventConfig.threshold) > 0 ? Number(eventConfig.threshold) : 3;
+
+    if (this.invalidSessionRetryCount >= threshold) {
+      this.notifyBarkEvent({
+        type: 'invalidSession',
+        key: `auth:invalid-session:${this.config.id}`,
+        severity: 'critical',
+        body: `${this.config.id} 登录会话连续失效 ${this.invalidSessionRetryCount} 次, 需要人工重新登录 @ ${this.config.host}`
+      });
+    }
+
+    return this.invalidSessionRetryCount;
   }
 
   // 403 自愈时推送手机提醒(标题 MULTIBOT Downdetector); 同一 bot 在冷却期内只推一次,
@@ -2222,6 +2380,12 @@ class BotRuntime {
         `[BOT] reconnect attempts exhausted reason=${reason} attempts=${this.restartAttempt}`
       );
       this.publishStatus();
+      this.notifyBarkEvent({
+        type: 'restartExhausted',
+        key: `bot:exhausted:${this.config.id}`,
+        severity: 'critical',
+        body: `${this.config.id} 自动重连已用尽(attempts=${this.restartAttempt} reason=${reason}), 已停止重连 @ ${this.config.host}`
+      });
       return;
     }
 

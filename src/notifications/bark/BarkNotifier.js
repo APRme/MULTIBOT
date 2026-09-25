@@ -138,6 +138,12 @@ class BarkNotifier {
     this.eventStates.delete(key);
   }
 
+  // 该 key 是否有"已推出去的故障通知"还没恢复(决定要不要推恢复通知)
+  hasPendingFailure(key) {
+    const state = this.eventStates.get(key);
+    return Boolean(state && state.lastSentAt);
+  }
+
   pruneSendTimestamps(now) {
     this.sendTimestamps = this.sendTimestamps.filter((ts) => now - ts < HOUR_MS);
   }
@@ -233,7 +239,6 @@ class BarkNotifier {
       this.clearEventState(eventKey);
       return { sent: false, reason: 'no-pending-failure' };
     }
-
     const now = this.now();
     const durationMs = state && state.firstSeenAt ? Math.max(0, now - state.firstSeenAt) : 0;
     const suffix = durationMs > 0 ? `（持续 ${formatDuration(durationMs)}）` : '';

@@ -12,8 +12,10 @@ const { MemoryLogService } = require('../logging/MemoryLogService');
 const { AggregateLogService } = require('../logging/AggregateLogService');
 const { ApiAccessLogService } = require('../logging/ApiAccessLogService');
 const { InstanceLifecycleLogService, LIFECYCLE_EVENTS } = require('../logging/InstanceLifecycleLogService');
+const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
+const { summarizeError } = require('../util/redact');
 
-const MULTIBOT_VERSION = 'V26.4.22-BarkNotification';
+const MULTIBOT_VERSION = 'V26.4.23-BarkNotification';
 
 class MultibotApp {
   constructor(options = {}) {
@@ -33,6 +35,48 @@ class MultibotApp {
     this.exceptionGuardsInstalled = false;
     this.uncaughtExceptionCount = 0;
     this.uncaughtExceptionWindowStartedAt = 0;
+    this.uncaughtTracker = null;
+  }
+
+  getNotificationEventConfig(type) {
+    const events = this.masterConfig && this.masterConfig.notifications
+      ? this.masterConfig.notifications.events
+      : null;
+    const raw = events && events[type] ? events[type] : {};
+    return raw && typeof raw === 'object' ? raw : {};
+  }
+
+  // A2: 未捕获异常(进程未退出, 已让 bots 走重连)在窗口内达到阈值才推, 避免单次瞬时异常打扰
+  trackUncaughtException(error) {
+    try {
+      const notifier = this.botManager ? this.botManager.barkNotifier : null;
+      if (!notifier || typeof notifier.notifyEvent !== 'function') return;
+      if (typeof notifier.isEnabled === 'function' && !notifier.isEnabled()) return;
+
+      const config = this.getNotificationEventConfig('uncaughtException');
+      if (config.enabled === false) return;
+
+      const threshold = Number(config.threshold) > 0 ? Number(config.threshold) : 3;
+      const windowMs = Number(config.windowMs) > 0 ? Number(config.windowMs) : 3600000;
+
+      if (!this.uncaughtTracker) {
+        this.uncaughtTracker = new EventThresholdTracker({ threshold, windowMs });
+      }
+
+      const { count, exceeded } = this.uncaughtTracker.record();
+      if (!exceeded) return;
+
+      void Promise.resolve(notifier.notifyEvent({
+        type: 'uncaughtException',
+        key: 'process:uncaught',
+        severity: 'active',
+        title: 'MULTIBOT Downdetector',
+        body: `近 ${Math.max(1, Math.round(windowMs / 60000))} 分钟未捕获异常 ${count} 次, 最近一次: ${summarizeError(error)}`,
+        label: 'backend'
+      })).catch(() => null);
+    } catch (notifyError) {
+      // 通知失败不得影响全局异常处理
+    }
   }
 
   installGlobalExceptionGuards() {
@@ -61,6 +105,8 @@ class MultibotApp {
         console.error('[MULTIBOT] 60 秒内连续 3 次未捕获异常，退出进程以避免无限重启循环');
         process.exit(1);
       }
+
+      this.trackUncaughtException(error);
 
       // 全局异常无法定位具体 bot（如 minecraft-protocol 解析错误），
       // 统一让所有活跃 bot 走正常断线重连，避免整个进程崩溃退出。
@@ -163,7 +209,8 @@ class MultibotApp {
       eventStream: this.eventStream,
       instanceService: this.instanceService,
       accessLogService: this.apiAccessLogService,
-      consoleConnectorConfig: this.masterConfig.consoleConnector
+      consoleConnectorConfig: this.masterConfig.consoleConnector,
+      barkNotifier: this.botManager.barkNotifier || null
     });
 
     await this.httpApiServer.start();

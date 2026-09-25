@@ -2017,6 +2017,200 @@ test('BotRuntime skips bark notification when notifier is disabled', () => {
   }
 });
 
+// 事件层通知(notifyEvent/notifyRecovery)的假通知器: 只记录调用, 不落盘
+function createEventNotifierStub(options = {}) {
+  const events = [];
+  const recoveries = [];
+  const pending = new Set();
+
+  return {
+    events,
+    recoveries,
+    pending,
+    isEnabled: () => options.enabled !== false,
+    getEventConfig: () => Object.assign({ enabled: true, cooldownMs: 0, threshold: 3 }, options.eventConfig || {}),
+    notifyEvent(payload) {
+      events.push(payload);
+      pending.add(payload.key);
+      return Promise.resolve({ sent: true, ok: true, reason: null, folded: 0, suppressed: 0 });
+    },
+    notifyRecovery(payload) {
+      recoveries.push(payload);
+      pending.delete(payload.key);
+      return Promise.resolve({ sent: true, reason: null, durationMs: 1000 });
+    },
+    hasPendingFailure: (key) => pending.has(key),
+    clearEventState: (key) => pending.delete(key)
+  };
+}
+
+test('BotRuntime pushes critical notification when MSA asks for interactive login', () => {
+  const notifier = createEventNotifierStub();
+  const runtime = createRuntime({ barkNotifier: notifier });
+  runtime.pendingAuthState = { deviceCodeIssued: false };
+
+  runtime.handleMsaCode({ message: '请打开 https://microsoft.com/link 输入 ABCD-EFGH' });
+
+  assert.equal(runtime.pendingAuthState.deviceCodeIssued, true);
+  assert.equal(notifier.events.length, 1);
+  assert.equal(notifier.events[0].type, 'deviceCode');
+  assert.equal(notifier.events[0].key, 'auth:device-code:alpha');
+  assert.equal(notifier.events[0].severity, 'critical');
+  assert.equal(notifier.events[0].label, 'alpha');
+  assert.match(notifier.events[0].body, /设备码登录/);
+});
+
+test('BotRuntime pushes critical notification when OpenAuth stops permanently', () => {
+  const notifier = createEventNotifierStub();
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  runtime.stopForOpenAuthFailure('ACCOUNT_SUSPENDED');
+
+  assert.equal(runtime.openAuthPermanentFailure, true);
+  assert.equal(runtime.desiredRunning, false);
+  assert.equal(notifier.events.length, 1);
+  assert.equal(notifier.events[0].type, 'openAuthPermanentFailure');
+  assert.equal(notifier.events[0].key, 'auth:permanent:alpha');
+  assert.equal(notifier.events[0].severity, 'critical');
+  assert.match(notifier.events[0].body, /ACCOUNT_SUSPENDED/);
+});
+
+test('BotRuntime pushes critical notification on refresh token invalidation', () => {
+  const notifier = createEventNotifierStub();
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  runtime.handleError(new Error('invalid_grant: AADSTS700082: The refresh token has expired'));
+
+  assert.equal(notifier.events.length, 1);
+  assert.equal(notifier.events[0].type, 'refreshTokenInvalid');
+  assert.equal(notifier.events[0].key, 'auth:refresh-token:alpha');
+  assert.equal(notifier.events[0].severity, 'critical');
+  assert.match(runtime.lastError, /invalid_grant/);
+});
+
+test('BotRuntime pushes critical notification when the account is rejected or banned', () => {
+  const notifier = createEventNotifierStub();
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  runtime.handleError(new Error('You are banned from this server!'));
+
+  assert.equal(notifier.events.length, 1);
+  assert.equal(notifier.events[0].type, 'authRejected');
+  assert.equal(notifier.events[0].key, 'auth:rejected:alpha');
+  assert.equal(notifier.events[0].severity, 'critical');
+});
+
+test('BotRuntime invalid_session retries only notify after the configured threshold', () => {
+  const notifier = createEventNotifierStub({ eventConfig: { threshold: 3 } });
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  runtime.trackInvalidSessionRetry();
+  runtime.trackInvalidSessionRetry();
+  assert.equal(notifier.events.length, 0, '前两次属于正常自愈, 不打扰');
+
+  runtime.trackInvalidSessionRetry();
+  assert.equal(runtime.invalidSessionRetryCount, 3);
+  assert.equal(notifier.events.length, 1);
+  assert.equal(notifier.events[0].type, 'invalidSession');
+  assert.equal(notifier.events[0].key, 'auth:invalid-session:alpha');
+  assert.match(notifier.events[0].body, /连续失效 3 次/);
+});
+
+test('BotRuntime still uses the dedicated 403 push instead of the event layer', async () => {
+  const stub = createEventNotifierStub();
+  const authPushes = [];
+  const notifier = Object.assign({}, stub, {
+    getCooldownMs: () => 600000,
+    notify(payload) {
+      authPushes.push(payload);
+      return Promise.resolve({ ok: true, reason: null, elapsedMs: 5 });
+    }
+  });
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-auth403-mixed-'));
+  const runtime = createRuntime({
+    config: { paths: createAuthPaths(tempDir) },
+    barkNotifier: notifier
+  });
+  runtime.state = 'starting';
+
+  try {
+    runtime.handleError(makeXbox403Error());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(authPushes.length, 1, '403 仍走专用推送');
+    assert.match(authPushes[0].body, /认证403/);
+    assert.equal(stub.events.length, 0, '403 不应重复触发事件层');
+  } finally {
+    runtime.clearRestartTimer();
+  }
+});
+
+test('BotRuntime pushes restart-exhausted notification and reports recovery when back online', async () => {
+  const notifier = createEventNotifierStub();
+  const runtime = createRuntime({
+    config: {
+      restartDelayScheduleMs: [60000, 300000],
+      restartDelayScheduleRepeatLast: false,
+      restartJitterMs: 0
+    },
+    restartPolicyOptions: {
+      randomProvider: () => 0
+    },
+    barkNotifier: notifier
+  });
+  runtime.connectionEpoch = 1;
+  runtime.state = 'starting';
+  runtime.desiredRunning = true;
+  runtime.lastDisconnectClass = 'backend_unavailable';
+  runtime.lastError = 'Could not connect to the backend server!';
+  runtime.restartAttempt = 2;
+
+  await runtime.handleEnd(1);
+
+  assert.equal(runtime.restartScheduleExhausted, true);
+  assert.equal(notifier.events.length, 1);
+  assert.equal(notifier.events[0].type, 'restartExhausted');
+  assert.equal(notifier.events[0].key, 'bot:exhausted:alpha');
+  assert.equal(notifier.events[0].severity, 'critical');
+  assert.match(notifier.events[0].body, /自动重连已用尽/);
+
+  await runtime.notifyBarkRecoveryForOnline();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(notifier.recoveries.length, 1, '恢复只推一条');
+  assert.match(notifier.recoveries[0].body, /已恢复在线/);
+  assert.equal(notifier.pending.has('bot:exhausted:alpha'), false);
+});
+
+test('BotRuntime clears every pending bot event state when recovering online', async () => {
+  const notifier = createEventNotifierStub();
+  const runtime = createRuntime({ barkNotifier: notifier });
+
+  runtime.notifyBarkEvent({ type: 'restartExhausted', key: 'bot:exhausted:alpha', severity: 'critical', body: 'a' });
+  runtime.notifyBarkEvent({ type: 'botStuck', key: 'bot:stuck:alpha', severity: 'critical', body: 'b' });
+  runtime.notifyBarkEvent({ type: 'deviceCode', key: 'auth:device-code:alpha', severity: 'critical', body: 'c' });
+
+  await runtime.notifyBarkRecoveryForOnline();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(notifier.recoveries.length, 1);
+  assert.equal(runtime.barkNotifier.hasPendingFailure('bot:exhausted:alpha'), false);
+  assert.equal(runtime.barkNotifier.hasPendingFailure('bot:stuck:alpha'), false);
+  assert.equal(runtime.barkNotifier.hasPendingFailure('auth:device-code:alpha'), false);
+});
+
+test('BotRuntime event notifications are skipped when the notifier is disabled', () => {
+  const notifier = createEventNotifierStub({ enabled: false });
+  const runtime = createRuntime({ barkNotifier: notifier });
+  runtime.pendingAuthState = { deviceCodeIssued: false };
+
+  runtime.handleMsaCode({ message: 'code' });
+  runtime.handleError(new Error('invalid_grant'));
+  runtime.stopForOpenAuthFailure('X');
+
+  assert.equal(notifier.events.length, 0);
+});
+
 test('classifyDisconnectReason recognizes ViaProxy backend messages', () => {
   assert.equal(
     classifyDisconnectReason('Could not connect to the backend server!'),

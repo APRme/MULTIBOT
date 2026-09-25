@@ -940,3 +940,87 @@ test('HttpApiServer close-window reports runtime errors', async () => {
     await server.stop();
   }
 });
+
+function createAuthFailureNotifier(events, threshold) {
+  return {
+    isEnabled: () => true,
+    notifyEvent(payload) {
+      events.push(payload);
+      return Promise.resolve({ sent: true, ok: true, reason: null, folded: 0, suppressed: 0 });
+    }
+  };
+}
+
+async function withAuthFailureServer(events, eventConfig, handler) {
+  const server = new HttpApiServer({
+    apiConfig: {
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token'
+    },
+    botManager: {
+      masterConfig: {
+        notifications: {
+          events: {
+            apiAuthFailure: eventConfig
+          }
+        }
+      }
+    },
+    barkNotifier: createAuthFailureNotifier(events, eventConfig.threshold)
+  });
+
+  await server.start();
+  const port = server.server.address().port;
+
+  try {
+    await handler(port);
+  } finally {
+    await server.stop();
+  }
+}
+
+test('HttpApiServer pushes a critical notification after repeated auth failures', async () => {
+  const events = [];
+
+  await withAuthFailureServer(events, { threshold: 3, windowMs: 600000 }, async (port) => {
+    for (let i = 0; i < 3; i += 1) {
+      const response = await makeRequest({ port, path: '/api/bots', token: 'wrong-token' });
+      assert.equal(response.statusCode, 401);
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'apiAuthFailure');
+    assert.equal(events[0].severity, 'critical');
+    assert.equal(events[0].label, 'api');
+    assert.match(events[0].key, /^api:auth-fail:/);
+    assert.match(events[0].body, /认证失败 3 次\/10 分钟/);
+  });
+});
+
+test('HttpApiServer stays silent below the auth failure threshold', async () => {
+  const events = [];
+
+  await withAuthFailureServer(events, { threshold: 5, windowMs: 600000 }, async (port) => {
+    for (let i = 0; i < 3; i += 1) {
+      await makeRequest({ port, path: '/api/bots', token: 'wrong-token' });
+    }
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(events.length, 0);
+  });
+});
+
+test('HttpApiServer skips auth failure notifications when the event is disabled', async () => {
+  const events = [];
+
+  await withAuthFailureServer(events, { enabled: false, threshold: 1, windowMs: 600000 }, async (port) => {
+    await makeRequest({ port, path: '/api/bots', token: 'wrong-token' });
+    await makeRequest({ port, path: '/api/bots', token: 'wrong-token' });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(events.length, 0);
+  });
+});
