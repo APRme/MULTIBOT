@@ -50,6 +50,22 @@
       "cooldownMs": 600000,
       "timeoutMs": 25000,
       "retryOnce": true
+    },
+    "events": {
+      "enabled": true,
+      "maxPerHour": 6,
+      "uncaughtException": { "enabled": true, "threshold": 3, "windowMs": 3600000, "cooldownMs": 1800000 },
+      "deviceCode": { "enabled": true, "cooldownMs": 600000 },
+      "openAuthPermanentFailure": { "enabled": true, "cooldownMs": 600000 },
+      "refreshTokenInvalid": { "enabled": true, "cooldownMs": 600000 },
+      "invalidSession": { "enabled": true, "threshold": 3, "cooldownMs": 1800000 },
+      "authRejected": { "enabled": true, "cooldownMs": 600000 },
+      "serverAllOffline": { "enabled": true, "offlineMs": 120000, "minBots": 2, "cooldownMs": 1800000 },
+      "restartExhausted": { "enabled": true, "cooldownMs": 600000 },
+      "botStuck": { "enabled": true, "stuckMs": 1800000, "cooldownMs": 1800000 },
+      "logFileTooLarge": { "enabled": true, "maxBytes": 1073741824, "checkIntervalMs": 3600000, "cooldownMs": 21600000 },
+      "apiAuthFailure": { "enabled": true, "threshold": 10, "windowMs": 600000, "cooldownMs": 1800000 },
+      "pushFailing": { "enabled": true, "threshold": 3, "cooldownMs": 1800000 }
     }
   },
   "defaults": {

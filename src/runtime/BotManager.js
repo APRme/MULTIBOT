@@ -1,4 +1,5 @@
 const { BotRuntime } = require('./BotRuntime');
+const { NotificationWatcher } = require('./NotificationWatcher');
 const { BroadcastService } = require('../control/BroadcastService');
 const { ChatConsoleCoordinator } = require('../logging/ChatConsoleCoordinator');
 const { BarkNotifier } = require('../notifications/bark/BarkNotifier');
@@ -38,6 +39,21 @@ class BotManager {
     this.barkNotifier = new BarkNotifier({
       config: this.notificationsConfig?.bark || {},
       appRoot: this.masterConfig?.appRoot || process.cwd()
+    });
+    this.notificationWatcher = new NotificationWatcher({
+      botManager: this,
+      notifier: this.barkNotifier,
+      appRoot: this.masterConfig?.appRoot || process.cwd(),
+      config: this.notificationsConfig?.events || null,
+      logger: {
+        info: (message) => console.log(`[MULTIBOT][notify] ${message}`),
+        warn: (message) => {
+          console.warn(`[MULTIBOT][notify] ${message}`);
+          if (this.aggregateLogService && typeof this.aggregateLogService.logWarn === 'function') {
+            this.aggregateLogService.logWarn(`[notify] ${message}`);
+          }
+        }
+      }
     });
 
     for (const botConfig of this.masterConfig.bots) {
@@ -165,6 +181,10 @@ class BotManager {
   }
 
   async start() {
+    if (this.notificationWatcher && typeof this.notificationWatcher.start === 'function') {
+      this.notificationWatcher.start();
+    }
+
     for (const botConfig of this.masterConfig.bots) {
       if (botConfig.enabled !== false && botConfig.autoStart === true) {
         await this.startBot(botConfig.id);
@@ -173,6 +193,10 @@ class BotManager {
   }
 
   async stop(reason = 'shutdown') {
+    if (this.notificationWatcher && typeof this.notificationWatcher.stop === 'function') {
+      this.notificationWatcher.stop();
+    }
+
     for (const runtime of this.runtimes.values()) {
       await runtime.stop(reason);
     }
