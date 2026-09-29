@@ -1,4 +1,5 @@
 const test = require('node:test');
+require('./helpers/tempDir'); // 测试临时目录统一重定向到工作区 .temp/test-run/
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
