@@ -65,6 +65,7 @@ function createRuntime(overrides = {}) {
     lastEndAt: null,
     lastFailureAt: null,
     pendingRestartScheduledAt: null,
+    expectedRunningSince: null,
     lastError: null,
     lastFailure: null
   }, overrides.runtime || {});
@@ -185,6 +186,109 @@ test('NotificationWatcher reports a bot stuck without restart activity for 30 mi
   assert.match(notifier.events[0].body, /已 60 分钟未上线/, '文案按最近一次活动时间算, 不按首次观察');
 });
 
+test('NotificationWatcher does not treat a manual restart as a long stuck bot', () => {
+  let clock = 1000000000000;
+  const manualRestart = createRuntime({
+    config: { id: 'CCT__BianMaQuanWuPin' },
+    runtime: {
+      state: 'starting',
+      lastSpawnAt: new Date(clock - 4 * 3600000).toISOString(),
+      lastEndAt: new Date(clock - 4 * 3600000).toISOString(),
+      expectedRunningSince: new Date(clock - 60000).toISOString(),
+      lastError: 'socket hang up'
+    }
+  });
+
+  const { watcher, notifier } = createWatcher({
+    now: () => clock,
+    runtimes: [manualRestart],
+    notifierOptions: { overrides: { botStuck: { stuckMs: 1800000, enabled: true } } }
+  });
+
+  watcher.checkStuckBots();
+  assert.equal(notifier.events.length, 0, '刚手动启动不应被判为长期卡住');
+
+  clock += 31 * 60000;
+  watcher.checkStuckBots();
+
+  assert.equal(notifier.events.length, 1);
+  assert.equal(notifier.events[0].type, 'botStuck');
+  assert.equal(notifier.events[0].key, 'bot:stuck:CCT__BianMaQuanWuPin');
+  assert.match(notifier.events[0].body, /已 32 分钟未上线/, '判定按本次启动起点算');
+  assert.match(notifier.events[0].body, /本次启动后 32 分钟/);
+  assert.match(notifier.events[0].body, /距上次活动 271 分钟/, '历史时长仍然报出来, 不低估严重程度');
+  assert.match(notifier.events[0].body, /socket hang up/);
+});
+
+test('NotificationWatcher still reports a hung auto-restart attempt', () => {
+  const now = 1000000000000;
+  const hung = createRuntime({
+    config: { id: 'CCT__APR_m' },
+    runtime: {
+      state: 'starting',
+      expectedRunningSince: new Date(now - 2 * 86400000).toISOString(),
+      lastEndAt: new Date(now - 35 * 60000).toISOString(),
+      restartTimer: null
+    }
+  });
+
+  const { watcher, notifier } = createWatcher({
+    now: () => now,
+    runtimes: [hung],
+    notifierOptions: { overrides: { botStuck: { stuckMs: 1800000, enabled: true } } }
+  });
+
+  watcher.checkStuckBots();
+
+  assert.equal(notifier.events.length, 1, '自动重连挂死仍须告警(基准取最新鲜的活动时间)');
+  assert.match(notifier.events[0].body, /已 35 分钟未上线/);
+  assert.match(notifier.events[0].body, /距上次活动 35 分钟/);
+});
+
+test('NotificationWatcher falls back to the observed window when no timestamps exist', () => {
+  let clock = 1000000000000;
+  const fresh = createRuntime({ config: { id: 'alpha' }, runtime: { state: 'starting' } });
+
+  const { watcher, notifier } = createWatcher({
+    now: () => clock,
+    runtimes: [fresh],
+    notifierOptions: { overrides: { botStuck: { stuckMs: 1800000, enabled: true } } }
+  });
+
+  watcher.checkStuckBots();
+  assert.equal(notifier.events.length, 0, '后端刚重启时以首次观察到的时间为基准');
+
+  clock += 31 * 60000;
+  watcher.checkStuckBots();
+  assert.equal(notifier.events.length, 1);
+  assert.match(notifier.events[0].body, /已 31 分钟未上线/);
+});
+
+test('NotificationWatcher resets the stuck episode when the bot is started again', () => {
+  let clock = 1000000000000;
+  const runtime = createRuntime({
+    config: { id: 'alpha' },
+    runtime: {
+      state: 'starting',
+      expectedRunningSince: new Date(clock - 40 * 60000).toISOString()
+    }
+  });
+
+  const { watcher, notifier } = createWatcher({
+    now: () => clock,
+    runtimes: [runtime],
+    notifierOptions: { overrides: { botStuck: { stuckMs: 1800000, enabled: true } } }
+  });
+
+  watcher.checkStuckBots();
+  assert.equal(notifier.events.length, 1, '40 分钟没有动静确实该报');
+
+  runtime.expectedRunningSince = new Date(clock).toISOString();
+  clock += 60000;
+  watcher.checkStuckBots();
+  assert.equal(notifier.events.length, 1, '重新启动后新一轮计时, 不应立刻重复告警');
+});
+
 test('NotificationWatcher tick interval comes from events config with a 10s floor', () => {
   const fromConfig = createWatcher({
     runtimes: [],
@@ -213,6 +317,7 @@ test('NotificationWatcher does not report stuck bots that are online, stopped or
       createRuntime({ config: { id: 'exhausted' }, runtime: { state: 'stopped', restartScheduleExhausted: true, lastSpawnAt: old } }),
       createRuntime({ config: { id: 'permanent-auth' }, runtime: { state: 'stopped', openAuthPermanentFailure: true, lastSpawnAt: old } }),
       createRuntime({ config: { id: 'scheduled' }, runtime: { state: 'waiting_restart', restartTimer: {}, lastSpawnAt: old } }),
+      createRuntime({ config: { id: 'just-restarted' }, runtime: { state: 'starting', lastSpawnAt: old, expectedRunningSince: new Date(now - 60000).toISOString() } }),
       createRuntime({ config: { id: 'recent' }, runtime: { state: 'starting', lastSpawnAt: new Date(now - 60000).toISOString() } })
     ],
     notifierOptions: { overrides: { botStuck: { stuckMs: 1800000, enabled: true } } }

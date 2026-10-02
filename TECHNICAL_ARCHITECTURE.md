@@ -1525,6 +1525,8 @@ OpenAuth 客户端会在有效 `oam:join` 解码并校验后、发起 Mojang Joi
 
 - **即时事件**：发生的那一刻就判定，来自 `BotRuntime`（设备码、OpenAuth 永久失败、refresh token 失效、账号被拒、会话失效、重连耗尽）、`MultibotApp`（未捕获异常窗口计数）、`HttpApiServer`（API 认证失败）
 - **巡检事件**：由 `NotificationWatcher` 按 `events.checkIntervalMs` 周期检查（服务器全员离线、bot 卡死、日志过大），随 `BotManager.start()/stop()` 启停
+- **bot 卡死的判定基准**：取“最近一次活动”（`lastSpawnAt` / `lastEndAt` / `lastFailureAt` / `pendingRestartScheduledAt` 的最大值）与“本次运行尝试起点”（`BotRuntime.expectedRunningSince`，每次 `start()` 写入、`stop()` 清空）中**较晚者**；两者都缺失（如后端刚重启）时退回本进程首次观察到的时间。这样手动停止很久后再启动不会被历史时间戳判成长期卡死，而自动重连挂死仍会在阈值后告警。正文同时给出“本次启动后 / 距上次活动”两个时长
+- **连接结束时刻**由 `BotRuntime.finalizeEndedBot()` 兜底写入 `lastEndAt`（只允许时间前进）：`handleEnd()` 里的写入可能因 epoch 不匹配（迟到的 `end` 事件）或 `end` 未在 `stop()` 的等待窗口内触发而缺失，缺失会让上述基准回落到更早的 `lastSpawnAt`
 
 ### 23.3 去重与降噪规则
 

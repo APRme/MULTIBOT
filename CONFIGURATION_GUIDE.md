@@ -433,7 +433,7 @@ node .\console-connector.js --bot-id example_bot --api-base http://127.0.0.1:180
 | `authRejected` | 账号被认证服务拒绝/封禁 | critical | 冷却 10 分钟 |
 | `serverAllOffline` | 同一 `host:port` 下期望运行的 bot 全部离线 | critical | 持续 `offlineMs` 2 分钟；`minBots` 2 |
 | `restartExhausted` | 自动重连次数用尽，已停止重连 | critical | 冷却 10 分钟 |
-| `botStuck` | 期望运行但非在线，且距最近活动超过阈值 | critical | `stuckMs` 30 分钟 |
+| `botStuck` | 期望运行但非在线，且超过阈值没有进展（判定基准取“最近一次活动”与“本次启动起点”中较晚者，且期间没有待执行的重连；手动停止很久后重新启动不会被误判） | critical | `stuckMs` 30 分钟 |
 | `logFileTooLarge` | `logs/` 下单文件超过阈值 | active | `maxBytes` 1GB；每 `checkIntervalMs` 1 小时扫一次 |
 | `apiAuthFailure` | 同一来源的 API 认证失败次数 | critical | `threshold` 10 次 / `windowMs` 10 分钟 |
 | `pushFailing` | 推送自身连续失败 | active | `threshold` 3 次 |

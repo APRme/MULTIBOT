@@ -1,6 +1,8 @@
 // 巡检器: 周期性检查那些"不会自己报错、但已经出问题"的状态, 并按事件推送。
 //   C1 serverAllOffline: 某 host:port 下期望运行的 bot 全部离线(服务器宕机/被限速封禁)
-//   D1 botStuck:        期望运行但长期非 online, 且期间没有任何重启动作(卡死)
+//   D1 botStuck:        期望运行但长期非 online, 且期间没有任何待执行的重连(卡死)。
+//                       基准取"最近一次活动"与"本次运行尝试起点(expectedRunningSince)"中较晚者,
+//                       避免手动停止很久后重新启动时被历史时间戳误判为长期卡死。
 //   E2 logFileTooLarge: logs/*.log 单个文件超过阈值(如 memory-monitor.log 无轮转)
 // 恢复: C1 恢复在线时推一条; D1 的恢复由 BotRuntime 上线时统一处理。
 // 说明: 只读状态, 从不修改 bot; 推送失败只写日志。
@@ -219,22 +221,34 @@ class NotificationWatcher {
         toMs(runtime.lastFailureAt),
         toMs(runtime.pendingRestartScheduledAt)
       );
+      const attemptStartMs = toMs(runtime.expectedRunningSince);
 
       const firstSeenAt = this.stuckSince.get(id) || now;
       this.stuckSince.set(id, firstSeenAt);
 
-      // 有明确活动时间戳时以它为准; 完全没有(如后端刚重启)则以本进程首次观察到的时间为准
-      const referenceMs = lastActivityMs > 0 ? lastActivityMs : firstSeenAt;
+      // 基准取"最近一次活动"与"本次运行尝试起点"中较晚者:
+      // 手动停止很久后再启动时, 历史时间戳会让首次巡检就误判为长期卡死;
+      // 自动重连场景下 lastEndAt/pendingRestartScheduledAt 才是最新鲜的, 仍然生效。
+      // 两者都没有(如后端刚重启)时退回本进程首次观察到的时间。
+      const referenceMs = Math.max(lastActivityMs, attemptStartMs) || firstSeenAt;
       if (now - referenceMs < stuckMs) return;
 
-      // 文案与阈值同口径: 报"距最近一次活动"的真实时长, 否则会低估严重程度
       const stuckMinutes = Math.max(1, Math.round((now - referenceMs) / 60000));
+      const detailParts = [];
+      if (attemptStartMs > 0) {
+        detailParts.push(`本次启动后 ${Math.max(1, Math.round((now - attemptStartMs) / 60000))} 分钟`);
+      }
+      if (lastActivityMs > 0) {
+        detailParts.push(`距上次活动 ${Math.max(1, Math.round((now - lastActivityMs) / 60000))} 分钟`);
+      }
+      const detail = detailParts.length > 0 ? `（${detailParts.join('，')}）` : '';
+
       this.notifyEvent({
         type: 'botStuck',
         key,
         severity: 'critical',
         title: 'MULTIBOT Downdetector',
-        body: `${id} 已 ${stuckMinutes} 分钟未上线且无重启动作 state=${runtime.state} last=${runtime.lastError || runtime.lastFailure || 'none'}`,
+        body: `${id} 已 ${stuckMinutes} 分钟未上线且期间无待执行的重连${detail} state=${runtime.state} last=${runtime.lastError || runtime.lastFailure || 'none'}`,
         label: id
       });
     });

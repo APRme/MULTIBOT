@@ -2767,9 +2767,50 @@ test('stop force-destroys leftover socket when quit throws', async () => {
     throw new Error('client not ready');
   };
   runtime.bot = bot;
+  runtime.lastEndAt = null;
 
   await runtime.stop('manual_stop');
 
   assert.equal(socket.destroyed, true);
   assert.equal(runtime.state, 'stopped');
+  assert.ok(runtime.lastEndAt, 'quit 失败/end 未触发时也必须补上连接结束时刻');
+  assert.equal(runtime.lastEndAt, runtime.diagnostics.currentConnectionEndedAt);
+});
+
+test('finalizeEndedBot backfills the connection end time without moving it backwards', async () => {
+  const runtime = createRuntime();
+  const bot = new EventEmitter();
+  runtime.bot = bot;
+  runtime.state = 'stopping';
+
+  await runtime.finalizeEndedBot(bot, 'manual_stop');
+  const backfilled = runtime.lastEndAt;
+  assert.ok(backfilled, '缺少结束时刻时兜底写入');
+
+  const newer = new Date(Date.parse(backfilled) + 60000).toISOString();
+  runtime.lastEndAt = newer;
+  await runtime.finalizeEndedBot(null, 'end');
+  assert.equal(runtime.lastEndAt, newer, '迟到的 finalize 不得把较新的结束时刻改旧');
+});
+
+test('BotRuntime records the expected-running start before creating the bot', async () => {
+  const runtime = createRuntime();
+  assert.equal(runtime.expectedRunningSince, null, '初始为空');
+
+  let seenDuringStart = null;
+  runtime.createMineflayerOptions = () => {
+    seenDuringStart = runtime.expectedRunningSince;
+    throw new Error('stop-before-createBot');
+  };
+
+  await assert.rejects(() => runtime.start(), /stop-before-createBot/);
+
+  assert.ok(seenDuringStart, 'start() 在创建连接之前就已记录本次启动起点');
+  assert.ok(Number.isFinite(Date.parse(seenDuringStart)), '格式可被 Date.parse 解析');
+  assert.equal(runtime.getSummary().expectedRunningSince, seenDuringStart, '面板摘要暴露该字段');
+
+  runtime.bot = null;
+  await runtime.stop('manual_stop');
+  assert.equal(runtime.expectedRunningSince, null, '停止后清空, 避免陈旧基准被复用');
+  assert.equal(runtime.getSummary().expectedRunningSince, null);
 });

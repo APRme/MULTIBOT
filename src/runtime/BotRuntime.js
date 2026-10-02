@@ -430,6 +430,9 @@ class BotRuntime {
     this.spawnCount = 0;
     this.lastSpawnAt = null;
     this.lastEndAt = null;
+    // 本次运行尝试(期望运行)的起点: 巡检器判定"卡住"时取它与最近一次活动中较晚者为基准,
+    // 避免手动长时间停止后重新启动时被拿历史时间戳误判为长期卡死。
+    this.expectedRunningSince = null;
     this.lastError = null;
     this.lastKick = null;
     this.lastFailure = null;
@@ -1422,6 +1425,7 @@ class BotRuntime {
       username: this.config.username,
       state: this.state,
       desiredRunning: this.desiredRunning,
+      expectedRunningSince: this.expectedRunningSince,
       hasBot: Boolean(bot),
       capabilities: this.getCapabilities(),
       worldColumns,
@@ -1465,6 +1469,7 @@ class BotRuntime {
     }
 
     this.desiredRunning = true;
+    this.expectedRunningSince = getTimestamp();
     this.pendingRestartReason = null;
     this.pendingRestartDelayOverrideMs = null;
     this.pendingRestartDelayMs = null;
@@ -1796,6 +1801,7 @@ class BotRuntime {
 
   async stop(reason = 'manual_stop') {
     this.desiredRunning = false;
+    this.expectedRunningSince = null;
     this.pendingRestartReason = null;
     this.pendingRestartDelayMs = null;
     this.restartAttempt = 0;
@@ -1964,6 +1970,20 @@ class BotRuntime {
   }
 
   async finalizeEndedBot(endedBot, reason = 'end', options = {}) {
+    // 走到这里就意味着"这条连接已经结束"。handleEnd 里的连接结束时刻写入可能因
+    // epoch 不匹配(迟到的 end 事件)或 'end' 未在 stop 的等待窗口内触发而缺失,
+    // 一旦缺失, 巡检器/D 类事件就会拿更早的 lastSpawnAt 当基准, 把正常重启误报成长期卡死。
+    // 因此在这里兜底补写, 且只允许时间前进(防止迟到的 finalize 把较新的值改旧)。
+    const endedAt = typeof options.endedAt === 'string' && options.endedAt
+      ? options.endedAt
+      : getTimestamp();
+    const endedAtMs = Date.parse(endedAt);
+    const currentEndedAtMs = Date.parse(this.lastEndAt || '');
+    if (Number.isFinite(endedAtMs) && (!Number.isFinite(currentEndedAtMs) || endedAtMs >= currentEndedAtMs)) {
+      this.lastEndAt = endedAt;
+      this.diagnostics.currentConnectionEndedAt = endedAt;
+    }
+
     this.clearPingTimer();
     this.disposeOpenAuthClient();
     this.detachRuntimeListeners();
@@ -1988,8 +2008,9 @@ class BotRuntime {
     this.clearStartupWarningTimer();
     this.clearOpenAuthRequestWatchdog();
     const wasStarting = this.state === 'starting';
-    this.lastEndAt = getTimestamp();
-    this.diagnostics.currentConnectionEndedAt = this.lastEndAt;
+    const endedAt = getTimestamp();
+    this.lastEndAt = endedAt;
+    this.diagnostics.currentConnectionEndedAt = endedAt;
     const endedBot = this.bot;
     this.rememberEndedBotForDiagnostics(endedBot, 'end');
     if (wasStarting && !this.lastFailure) {
@@ -2012,7 +2033,7 @@ class BotRuntime {
       || (backendUnavailable ? 'backend_unavailable' : 'disconnect');
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_DISCONNECT, { reason: disconnectReason });
     this.clearLegacyAutoRestartTimer();
-    await this.finalizeEndedBot(endedBot, 'end', { publishStopped: false });
+    await this.finalizeEndedBot(endedBot, 'end', { publishStopped: false, endedAt });
 
     if (this.desiredRunning && this.restartPolicy.shouldRestart()) {
       const delayMs = this.pendingRestartDelayOverrideMs;
@@ -2758,6 +2779,7 @@ class BotRuntime {
       spawnCount: this.spawnCount,
       lastSpawnAt: this.lastSpawnAt,
       lastEndAt: this.lastEndAt,
+      expectedRunningSince: this.expectedRunningSince,
       lastError: this.lastError,
       lastKick: this.lastKick,
       lastFailure: this.lastFailure,
