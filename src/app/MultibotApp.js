@@ -15,7 +15,19 @@ const { InstanceLifecycleLogService, LIFECYCLE_EVENTS } = require('../logging/In
 const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
 const { summarizeError } = require('../util/redact');
 
-const MULTIBOT_VERSION = 'V26.4.29-BarkNotification';
+const MULTIBOT_VERSION = 'V26.4.30-BarkNotification';
+
+// 录像子系统(flashback-recorder)自身的异常不应牵连 bot:
+// 它既不该触发"全量重启所有 bot", 也不该让进程硬退出而不关闭连接
+// (硬退出会让代理侧会话滞留到超时, 重启后同账号登录被踢 already connected to this proxy)。
+const RECORDER_STACK_PATTERN = /flashback-recorder/i;
+
+function isRecorderOriginError(error) {
+  if (!error) return false;
+  if (error.code === 'FLASHBACK_RECORDER_ERROR') return true;
+  const stack = typeof error.stack === 'string' ? error.stack : '';
+  return RECORDER_STACK_PATTERN.test(stack);
+}
 
 class MultibotApp {
   constructor(options = {}) {
@@ -36,6 +48,7 @@ class MultibotApp {
     this.uncaughtExceptionCount = 0;
     this.uncaughtExceptionWindowStartedAt = 0;
     this.uncaughtTracker = null;
+    this.shutdownInProgress = false;
   }
 
   getNotificationEventConfig(type) {
@@ -103,10 +116,21 @@ class MultibotApp {
 
       if (this.uncaughtExceptionCount >= 3) {
         console.error('[MULTIBOT] 60 秒内连续 3 次未捕获异常，退出进程以避免无限重启循环');
-        process.exit(1);
+        // 先优雅关闭再退出: 否则 bot 连接不会走 quit/销毁残留 socket,
+        // 代理侧会一直认为该账号在线(重启后表现为 "already connected to this proxy")。
+        void this.shutdownThenExit('uncaught_exception');
+        return;
       }
 
       this.trackUncaughtException(error);
+
+      if (isRecorderOriginError(error)) {
+        // 录像(整点导出/打包)异常不影响 bot 连接: 只记录, 不重启 bot。
+        // 这类错误的主要来源已在 recorder 内部兜底(ZipExporter 接住 yazl 的 error),
+        // 走到这里说明仍有漏网, 但为此全量重启所有 bot 的代价远大于收益。
+        console.error('[MULTIBOT] 判定为录像子系统异常, 跳过 bot 重启:', summarizeError(error));
+        return;
+      }
 
       // 全局异常无法定位具体 bot（如 minecraft-protocol 解析错误），
       // 统一让所有活跃 bot 走正常断线重连，避免整个进程崩溃退出。
@@ -124,6 +148,29 @@ class MultibotApp {
         }
       }
     });
+  }
+
+  // 硬退出前先优雅关闭: 停 HTTP、停所有 bot(内部会 quit + 销毁残留 socket)。
+  // 否则代理侧会话会滞留到超时, 进程重启后同账号登录会被踢 "already connected to this proxy"。
+  // 兜底: 超时(默认 10s)后无论如何退出, 避免卡在关闭流程里。
+  async shutdownThenExit(reason = 'uncaught_exception', timeoutMs = 10000) {
+    if (this.shutdownInProgress) return;
+    this.shutdownInProgress = true;
+
+    const timeout = setTimeout(() => {
+      console.error('[MULTIBOT] 优雅关闭超时，强制退出进程');
+      process.exit(1);
+    }, Math.max(1000, Number(timeoutMs) || 10000));
+    if (timeout && typeof timeout.unref === 'function') timeout.unref();
+
+    try {
+      await this.stop(reason);
+    } catch (error) {
+      console.error('[MULTIBOT] 优雅关闭失败:', error && error.stack ? error.stack : error);
+    } finally {
+      clearTimeout(timeout);
+      process.exit(1);
+    }
   }
 
   async restartActiveBotsAfterCrash(reason) {
@@ -246,5 +293,6 @@ class MultibotApp {
 
 module.exports = {
   MultibotApp,
-  MULTIBOT_VERSION
+  MULTIBOT_VERSION,
+  isRecorderOriginError
 };
