@@ -859,11 +859,13 @@ ServerOwner
 | `behavior.whitelistReloadMinutes` | number | `30` | 兼容保留字段，当前不再驱动定时刷新 |
 | `behavior.enableResourcePack` | boolean | `false` | 是否接受服务器资源包 |
 | `behavior.physicsStandby` | boolean | `false` | 挂机省电：空闲时关闭 mineflayer 物理模拟（`bot.physicsEnabled=false`），移动/骑乘/蹲下时自动恢复 |
+| `behavior.lockAfterExpireCommand` | string | `/home` | 锁**自然到期**后自动执行的命令（游戏内命令需带 `/`；空字符串 `""` = 禁用）。手动 `unlock` 不触发；到期时 bot 不在线则记为待执行，恢复上线后补执行一次 |
 
 说明：
 
 - `enableSpawnActions` 当前建议改用 `ScriptScheduler` 或 `script`
 - `whitelistReloadMinutes` 现在仅为兼容保留；白名单刷新已改成 `fs.watch`
+- `lockAfterExpireCommand` 的优先级：单只 bot 的 `config.json` > 所在服务器的 `default.config.json` > 代码默认 `/home`；此外**单次锁定**可用 `lock <1s|1m|1h|1d> <原因> [true|false]` 的尾参覆盖（`true` = 到期执行，且全局配置为空时回退 `/home`；`false` = 本次不执行；不写 = 跟随全局配置）
 
 ### 4.5 `capabilities`
 
