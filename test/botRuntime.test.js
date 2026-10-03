@@ -1454,6 +1454,98 @@ test('BotRuntime attachLightweightFeatures mounts inventory and window features'
   runtime.detachRuntimeListeners();
 });
 
+test('BotRuntime attachUnsignedChatWindowGuard neutralizes the lastSeen window without profile keys', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+
+  const writes = [];
+  const client = new EventEmitter();
+  client.profileKeys = null; // 无签名密钥(disableChatSigning 生效)
+  client.write = (name, params) => {
+    writes.push({ name, params });
+  };
+  const bot = { _client: client, version: '1.21.11' };
+
+  runtime.attachUnsignedChatWindowGuard(bot);
+
+  // 上游上报窗口(可能与服务端漂移) => 被改写成恒定空更新
+  client.write('chat_message', {
+    message: 'hi',
+    timestamp: 1n,
+    salt: 2n,
+    signature: undefined,
+    offset: 7,
+    acknowledged: Buffer.from([0xff, 0xff, 0xff]),
+    checksum: 42
+  });
+
+  const chatWrite = writes.find((entry) => entry.name === 'chat_message');
+  assert.ok(chatWrite, 'chat_message 仍被写出');
+  assert.equal(chatWrite.params.offset, 0);
+  assert.deepEqual(chatWrite.params.acknowledged, Buffer.from([0, 0, 0]));
+  assert.equal(chatWrite.params.checksum, 0, '0 = 原版 IGNORE_CHECKSUM');
+  assert.equal(chatWrite.params.message, 'hi', '其余字段不动');
+
+  // 已签名命令包走同一个窗口字段(名为 messageCount)
+  client.write('chat_command_signed', {
+    command: 'list',
+    timestamp: 1n,
+    salt: 2n,
+    argumentSignatures: [],
+    messageCount: 5,
+    acknowledged: Buffer.from([0xff, 0xff, 0xff]),
+    checksum: 9
+  });
+  const commandWrite = writes.find((entry) => entry.name === 'chat_command_signed');
+  assert.equal(commandWrite.params.messageCount, 0);
+  assert.deepEqual(commandWrite.params.acknowledged, Buffer.from([0, 0, 0]));
+  assert.equal(commandWrite.params.checksum, 0);
+
+  // 有密钥时不干预(那条路径需要真正维护窗口)
+  client.profileKeys = { private: Buffer.alloc(1) };
+  client.write('chat_message', { message: 'x', offset: 3, acknowledged: Buffer.from([1, 2, 3]), checksum: 7 });
+  const signedWrite = writes.filter((entry) => entry.name === 'chat_message').pop();
+  assert.equal(signedWrite.params.offset, 3);
+  assert.deepEqual(signedWrite.params.acknowledged, Buffer.from([1, 2, 3]));
+  assert.equal(signedWrite.params.checksum, 7);
+
+  // 其它包不受影响
+  client.write('keep_alive', { keepAliveId: 1n });
+  assert.equal(writes.filter((entry) => entry.name === 'keep_alive').length, 1);
+
+  // 解绑后恢复原始 write
+  runtime.detachRuntimeListeners();
+  client.profileKeys = null;
+  client.write('chat_message', { message: 'after', offset: 4, acknowledged: Buffer.from([9]), checksum: 9 });
+  const restored = writes.filter((entry) => entry.name === 'chat_message').pop();
+  assert.equal(restored.params.offset, 4, '解绑后不再改写');
+});
+
+test('BotRuntime attachUnsignedChatWindowGuard skips versions without the ack window fields', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+
+  const writes = [];
+  const client = new EventEmitter();
+  client.profileKeys = null;
+  client.write = (name, params) => {
+    writes.push({ name, params });
+  };
+  // 1.16.5 的 chat_message 只有 message/position, 没有 acknowledged/checksum
+  const bot = { _client: client, version: '1.16.5' };
+
+  runtime.attachUnsignedChatWindowGuard(bot);
+  client.write('chat_message', { message: 'hi', offset: 3 });
+
+  assert.equal(writes[0].params.offset, 3, '不介入旧协议');
+});
+
 test('BotRuntime executes lock-after-expire command when online', () => {
   const chats = [];
   const runtime = createRuntime({

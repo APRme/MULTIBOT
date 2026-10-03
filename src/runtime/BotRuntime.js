@@ -41,6 +41,43 @@ const { getTimestamp } = require('../util/time');
 
 const OPEN_AUTH_REQUEST_WATCHDOG_MS = 10000;
 
+// 空 lastSeen 窗口上报用的 checksum: 原版 LastSeenMessages.Update.IGNORE_CHECKSUM = 0,
+// verifyChecksum() 里 `checksum == 0 || checksum == computeChecksum()` —— 0 表示"跳过校验",
+// 因此无论服务端窗口内容如何, 这个值都被接受(比空集合的 1 更稳)。
+const IGNORED_LAST_SEEN_CHECKSUM = 0;
+
+// 取该协议版本聊天包的"已读确认窗口"字段(1.21.5+ 才有 acknowledged/checksum)。
+// 返回 { ackBytes, offsetField }: offsetField 是该包里表示 offset 的字段名
+// (chat_message 叫 offset, chat_command_signed 叫 messageCount)。
+function getChatWindowPacketShape(version) {
+  try {
+    const data = require('minecraft-data')(version);
+    const types = data && data.protocol && data.protocol.play && data.protocol.play.toServer
+      && data.protocol.play.toServer.types;
+    if (!types) return null;
+
+    const readShape = (packetName, offsetField) => {
+      // 注: minecraft-data 的 types 里键名带 packet_ 前缀, 运行时包名不带
+      const packet = types[`packet_${packetName}`] || types[packetName];
+      if (!Array.isArray(packet) || !Array.isArray(packet[1])) return null;
+      const fields = new Map(packet[1].map((field) => [field.name, field.type]));
+      if (!fields.has('acknowledged') || !fields.has('checksum') || !fields.has(offsetField)) return null;
+      const acknowledgedType = fields.get('acknowledged');
+      const ackBytes = Array.isArray(acknowledgedType) && acknowledgedType[1] && Number.isInteger(acknowledgedType[1].count)
+        ? acknowledgedType[1].count
+        : 3;
+      return { offsetField, ackBytes };
+    };
+
+    return {
+      chat_message: readShape('chat_message', 'offset'),
+      chat_command_signed: readShape('chat_command_signed', 'messageCount')
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
 function normalizeUnsignedPlayerChatPacket(packet, options = {}) {
   if (!packet || packet.signature != null || packet.unsignedChatContent) {
     return false;
@@ -1170,6 +1207,70 @@ class BotRuntime {
     );
   }
 
+  // 无签名密钥(disableChatSigning 生效)时, 上游 minecraft-protocol 仍按自己的 lastSeen 追踪状态
+  // 上报"已读确认窗口(offset/acknowledged/checksum)"。服务端 LastSeenMessagesValidator 会严格校验,
+  // 且**位图必须与服务端窗口逐位对齐**(服务端把新消息追加在尾部, 上游却把新消息插在 index 0),
+  // 一旦服务端真的追踪过签名消息(正版客户端发言 → addPending), 客户端置 1 的那些位在服务端就是 null:
+  //   ValidationException: Last seen update acknowledged unknown or previously ignored message at index N
+  //   => disconnect(chat_validation_failed)  [ServerGamePacketListenerImpl: Failed to validate message acknowledgements]
+  // 原版校验器的语义(1.21.11 LastSeenMessagesValidator / LastSeenMessages.Update):
+  //   - trackedMessages 初始化即预填 lastSeenCount(20) 个 null => offset=0 恒合法
+  //   - 位图全 0 时, 每条目要么是 null 要么是 pending, 只会被置 null, 永不抛错
+  //     (只有"曾确认过的条目被忽略"才抛错, 而我们从不确定任何消息)
+  //   - checksum 支持 0 = IGNORE_CHECKSUM, 显式跳过校验
+  // 因此无密钥场景统一上报"恒定空更新", 与服务端窗口彻底解耦。
+  // 注意: 有密钥时保持上游行为不变(那条路径的窗口语义需要真正维护)。
+  attachUnsignedChatWindowGuard(bot) {
+    const client = bot && bot._client;
+    if (!client || typeof client.write !== 'function') return;
+
+    const shape = getChatWindowPacketShape(bot.version);
+    if (!shape || (!shape.chat_message && !shape.chat_command_signed)) return;
+
+    // 清空上游追踪器: 保证我们这一侧永远不会"确认"任何消息(否则会与服务端窗口叠加出错)
+    if (client._lastSeenMessages) {
+      if (Array.isArray(client._lastSeenMessages)) {
+        client._lastSeenMessages.length = 0;
+      }
+      if (typeof client._lastSeenMessages === 'object') {
+        client._lastSeenMessages.pending = 0;
+      }
+    }
+
+    // 服务端窗口 = 20 个固定槽 + 逐条追加的"带签名消息"。既然我们从不确定任何消息,
+    // 就不该让追加部分无限增长(否则服务端侧每条签名消息都会留一个永不回收的条目),
+    // 因此按"我们看到的签名消息条数"做保守修剪: 只推进到还剩 40 条, 留足余量,
+    // 即使本地多计也不会超过服务端的 maxOffset 而触发校验失败。
+    let signedPending = 0;
+    this.addRuntimeListener(client, 'player_chat', (packet) => {
+      if (packet && packet.signature) {
+        signedPending += 1;
+      }
+    });
+
+    const originalWrite = client.write.bind(client);
+
+    client.write = (name, params) => {
+      const packetShape = shape[name];
+      // 注释: 动态判断(而非挂载时判断), 避免密钥在连接后才就绪时误判
+      if (packetShape && params && typeof params === 'object' && !client.profileKeys) {
+        const offset = Math.max(0, signedPending - 40);
+        if (offset > 0) {
+          signedPending -= offset;
+        }
+        params[packetShape.offsetField] = offset;
+        params.acknowledged = Buffer.alloc(packetShape.ackBytes, 0);
+        params.checksum = IGNORED_LAST_SEEN_CHECKSUM;
+      }
+
+      return originalWrite(name, params);
+    };
+
+    this.runtimeListenerDisposers.push(() => {
+      client.write = originalWrite;
+    });
+  }
+
   attachRuntimeDiagnostics(bot) {
     if (!this.isMemoryDetailsEnabled()) {
       return;
@@ -1612,6 +1713,7 @@ class BotRuntime {
     this.bot = bot;
     this.lastClientForCleanup = bot && bot._client ? bot._client : null;
     this.attachUnsignedPlayerChatGuard(bot);
+    this.attachUnsignedChatWindowGuard(bot);
     this.attachRuntimeDiagnostics(bot);
     this.scheduleStartupWarning(bot);
     if (this.isOpenAuthEnabled() && bot._client) {

@@ -650,6 +650,24 @@ feature 通常遵循以下模式：
 - **解析始终使用未装饰的原始文本**：带前缀的名字会破坏私聊信任校验与传送提示匹配，
   装饰结果只用于日志/活动日志/面板显示。
 
+### 10.0.1 无签名密钥时的“已读确认窗口”
+
+`capabilities` 之外的 `disableChatSigning`（默认开）让 bot 不带签名密钥发言。此时上游仍会
+按自己的 `lastSeen` 追踪状态上报 `chat_message` 的 `offset/acknowledged/checksum`，而服务端
+`LastSeenMessagesValidator` 会逐位校验：
+
+- 服务端窗口 = 20 个固定槽（初始化即预填 null）+ 逐条追加的“带签名消息”
+  （只有 `signature != null` 的消息才会 `addPending`）
+- 位图必须与服务端窗口**逐位对齐**：置 1 的位若在服务端是 null，直接
+  `ValidationException: acknowledged unknown or previously ignored message` → 断开
+  `chat_validation_failed`；上游把新消息插在 index 0，与服务端的尾部追加顺序不一致
+- `LastSeenMessages.Update.IGNORE_CHECKSUM = 0`：`checksum == 0` 时跳过校验
+
+因此 `BotRuntime.attachUnsignedChatWindowGuard()` 在**无密钥**连接上把出站窗口固定成
+“恒定空更新”：`offset` 仅按本地看到的签名消息条数做**保守修剪**（只推进到还剩 40 条，
+保证不超过服务端的 `maxOffset`）、`acknowledged` 全 0（永不确定任何消息 → 永不触发两条抛错路径）、
+`checksum = 0`。同时清空上游追踪器，保证本侧永不“确认”消息。有密钥的连接不做任何干预。
+
 ### 10.1 `BotLogger`
 
 每个 runtime 自带一个 `BotLogger`：
