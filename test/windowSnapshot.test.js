@@ -91,6 +91,7 @@ test('buildWindowSnapshot builds supported window snapshot', () => {
   const window = {
     id: 3,
     type: 'minecraft:generic_9x3',
+    title: { text: '商店' },
     inventoryStart: 27,
     inventoryEnd: 54,
     slots: [
@@ -103,6 +104,7 @@ test('buildWindowSnapshot builds supported window snapshot', () => {
     id: 3,
     name: 'chest',
     supported: true,
+    title: '商店',
     inventoryStart: 27,
     inventoryEnd: 54,
     slots: [
@@ -117,6 +119,21 @@ test('buildWindowSnapshot builds supported window snapshot', () => {
       }
     ]
   });
+});
+
+test('buildWindowSnapshot derives a readable name for custom menu types', () => {
+  // 自定义菜单(未知类型/数字 id): 27 槽按箱子展示, 45 槽给出 generic_9x5 标签
+  const chestLike = buildWindowSnapshot({ id: 5, type: 99, inventoryStart: 27, inventoryEnd: 63, slots: [] });
+  assert.equal(chestLike.name, 'chest');
+  assert.equal(chestLike.supported, true);
+
+  const oddSize = buildWindowSnapshot({ id: 6, type: 99, inventoryStart: 45, inventoryEnd: 81, slots: [] });
+  assert.equal(oddSize.name, 'generic_9x5');
+  assert.equal(oddSize.supported, false);
+
+  const unknown = buildWindowSnapshot({ id: 7, type: 99, slots: [] });
+  assert.equal(unknown.name, 'unknown');
+  assert.equal(unknown.supported, false);
 });
 
 test('buildWindowSnapshot keeps raw type with supported=false for unknown windows', () => {

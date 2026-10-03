@@ -1415,6 +1415,45 @@ test('BotRuntime attachLightInventoryCore mounts zero-entity inventory on lightw
   runtime.detachRuntimeListeners();
 });
 
+test('BotRuntime attachLightweightFeatures mounts inventory and window features', () => {
+  const registry = require('prismarine-registry')('1.21.11');
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+  const writes = [];
+  const client = new EventEmitter();
+  client.write = (name, payload) => {
+    writes.push({ name, payload });
+  };
+  const bot = new EventEmitter();
+  bot._client = client;
+  bot.registry = registry;
+  bot.version = '1.21.11';
+
+  runtime.attachLightweightFeatures(bot);
+
+  assert.ok(bot.inventory, 'bot.inventory mounted');
+  assert.equal(runtime.windowFeature.bot, bot, 'WindowFeature 在轻量模式也挂载');
+  assert.equal(runtime.inventoryFeature.bot, bot);
+
+  // 服务器打开的菜单窗口: 面板取到的快照应与普通模式一致(带标题与容器槽位)
+  client.emit('open_window', { windowId: 6, inventoryType: 2, windowTitle: { text: '商店' }, stateId: 1 });
+  const items = Array.from({ length: 63 }, () => ({ present: false }));
+  client.emit('window_items', { windowId: 6, items, stateId: 2 });
+
+  const snapshot = runtime.getWindowSnapshot();
+  assert.ok(snapshot, 'lightweight snapshot exists');
+  assert.equal(snapshot.id, 6);
+  assert.equal(snapshot.name, 'chest');
+  assert.equal(snapshot.title, '商店');
+  assert.equal(snapshot.inventoryStart, 27);
+
+  runtime.detachFeaturesFromBot();
+  runtime.detachRuntimeListeners();
+});
+
 test('BotRuntime executes lock-after-expire command when online', () => {
   const chats = [];
   const runtime = createRuntime({

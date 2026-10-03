@@ -1285,8 +1285,8 @@ class BotRuntime {
     });
   }
 
-  // 轻量模式专属背包核心: 零实体依赖(收 window_items/set_slot 自维护 window0),
-  // 让复用 inv 命令的 InventoryFeature 在无 mineflayer inventory 插件时也能工作。
+  // 轻量模式专属背包核心: 零实体依赖(自维护 window0 背包与服务器打开的窗口),
+  // 让复用 inv/chest 命令的特性在无 mineflayer inventory 插件时也能工作。
   attachLightInventoryCore(bot) {
     const client = bot && bot._client;
     if (!client || typeof client.on !== 'function' || typeof client.write !== 'function') {
@@ -1303,6 +1303,22 @@ class BotRuntime {
       this.logger.error('[BOT] lightweight inventory core attach failed', error);
       this.logCapabilitySkip('inventory', 'because lightweight inventory core attach failed');
     }
+  }
+
+  // 轻量模式的特性装配: 零实体/零地形依赖的部分(自身背包 + 服务器主动打开的窗口)。
+  // 服务器的菜单/箱子经 open_window 下发, 只需要窗口相关的几个小包, 因此轻量模式也能
+  // 与普通模式一样查看/点击/关闭(面板展示、chest 命令、close-window 接口全部复用 WindowFeature)。
+  // 仍不支持的: 走位(movement)、进食(eat)、对着方块开箱子/实体交互(需要地形与实体数据)。
+  attachLightweightFeatures(bot) {
+    if (!this.isInventoryHandlingEnabled()) {
+      this.logCapabilitySkip('inventory/window/movement/eat', 'because lightweight mode (no entity/terrain)');
+      return;
+    }
+
+    this.attachLightInventoryCore(bot);
+    this.inventoryFeature.attach(bot);
+    this.windowFeature.attach(bot);
+    this.logCapabilitySkip('movement/eat/block-container', 'because lightweight mode (no entity/terrain)');
   }
 
   refreshWorldColumnDiagnostics() {
@@ -1692,16 +1708,7 @@ class BotRuntime {
     this.teleportFeature.attach(bot);
     this.activityLogFeature.attach(bot);
     if (this.isLightweightMode()) {
-      // 轻量模式：无实体/物理/地形插件。inventoryHandling=true 时用零实体依赖的
-      // 轻量背包核心(收 window_items/set_slot 自维护 window0)复用 inv 命令；
-      // window/chest(容器)、movement、eat 仍跳过。
-      if (this.isInventoryHandlingEnabled()) {
-        this.attachLightInventoryCore(bot);
-        this.inventoryFeature.attach(bot);
-        this.logCapabilitySkip('window/chest/movement/eat', 'because lightweight mode (no container/entity/terrain)');
-      } else {
-        this.logCapabilitySkip('inventory/window/movement/eat', 'because lightweight mode (no entity/terrain)');
-      }
+      this.attachLightweightFeatures(bot);
     } else {
       this.inventoryFeature.attach(bot);
       this.windowFeature.attach(bot);

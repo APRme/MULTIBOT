@@ -1,12 +1,18 @@
 // 轻量背包核心: mineflayer inventory/simple_inventory 插件"窗口部分"的裁剪移植,
-// 去掉全部 bot.entity/physics/blocks 依赖。仅支持自身背包(window 0)的查看/整理/丢弃,
-// 不支持容器/合成/使用物品(与轻量模式能力一致)。
-// 数据流: 服务器登录/重生后主动推送 window_items(0) 全量背包, 日常经 set_slot 增量更新
+// 去掉全部 bot.entity/physics/blocks 依赖。
+// 覆盖: 自身背包(window 0) + 服务器主动打开的窗口(箱子/菜单, 即 open_window)。
+//   - 维护 bot.currentWindow, 并像 mineflayer 一样发出 windowOpen/windowClose/setWindowItems:<id>/setSlot:<id>
+//     事件, 因此 WindowFeature(面板展示、chest 命令、关闭窗口) 在轻量模式下可原样复用;
+//   - 未识别的菜单类型(插件/资源包自定义)也支持: prismarine-windows 需要"容器槽位数",
+//     1.20.2+ 的 open_window 不再携带 slotCount, 这时用随后到达的 window_items 物品总数反推(总数 - 36 玩家背包)。
+// 不支持: 走位/实体/方块交互类操作(与轻量模式能力一致)。
+// 数据流: 登录/重生后服务器主动推送 window_items(0) 全量背包, 日常经 set_slot 增量更新
 // (MCC 同款机制, 无需客户端请求包); 点击/丢弃只发 window_click/held_item_slot 协议包。
 const ItemLib = require('prismarine-item');
 const windowsLib = require('prismarine-windows');
 
 const QUICK_BAR_START = 36;
+const PLAYER_INVENTORY_SLOTS = 36;
 
 // hooks: { addListener(target, event, handler), logger? }
 function attachLightInventory(bot, hooks = {}) {
@@ -38,30 +44,151 @@ function attachLightInventory(bot, hooks = {}) {
     }
   });
 
-  let stateId = -1;
+  // 1.17.1+ 窗口点击依赖 stateId; 服务器对 window_items/set_slot 均携带最新 stateId。
+  // 同时开多个窗口时 stateId 是"每个窗口各自一个", 因此按 windowId 分别记录。
+  const stateIdByWindow = new Map();
+  // 未知菜单类型: 先记下 open_window, 等 window_items 反推槽位数后再建窗口
+  let pendingOpenWindow = null;
+  // 窗口已建立但物品数据还没到: 与 mineflayer 一致, 等物品到了再对外发 windowOpen
+  let pendingOpenEmitWindowId = null;
 
-  // 1.17.1+ 窗口点击依赖 stateId; 服务器对 window_items/set_slot 均携带最新 stateId
   const trackStateId = (packet) => {
-    if (packet && Number.isInteger(packet.stateId)) {
-      stateId = packet.stateId;
+    if (packet && Number.isInteger(packet.stateId) && Number.isInteger(packet.windowId)) {
+      stateIdByWindow.set(packet.windowId, packet.stateId);
     }
+  };
+
+  const getStateId = (windowId) => (stateIdByWindow.has(windowId) ? stateIdByWindow.get(windowId) : -1);
+
+  const resolveWindow = (windowId) => {
+    if (windowId === 0) return bot.inventory;
+    if (bot.currentWindow && bot.currentWindow.id === windowId) return bot.currentWindow;
+    return null;
+  };
+
+  const applyItems = (window, items) => {
+    if (!Array.isArray(items)) return;
+    const limit = Math.min(items.length, window.slots.length);
+    for (let i = 0; i < limit; ++i) {
+      window.updateSlot(i, Item.fromNotch(items[i]));
+    }
+    updateHeldItem();
+  };
+
+  // 建立窗口。已知的 menu 类型交给 prismarine-windows 按其布局建;
+  // 未知类型(自定义菜单)时它只在给了 slotCount 的情况下才肯建, 所以用物品总数兜底。
+  const createWindow = (packet, totalSlots) => {
+    try {
+      const created = windows.createWindow(
+        packet.windowId,
+        packet.inventoryType,
+        packet.windowTitle,
+        packet.slotCount
+      );
+      if (created) {
+        return created;
+      }
+    } catch (error) {
+      log(`[BOT] window create failed type=${packet.inventoryType}: ${error.message}`);
+    }
+
+    if (!Number.isInteger(totalSlots) || totalSlots <= PLAYER_INVENTORY_SLOTS) {
+      return null;
+    }
+
+    try {
+      return windows.createWindow(
+        packet.windowId,
+        `custom:${packet.inventoryType}`,
+        packet.windowTitle,
+        totalSlots - PLAYER_INVENTORY_SLOTS
+      );
+    } catch (error) {
+      log(`[BOT] custom window fallback failed type=${packet.inventoryType}: ${error.message}`);
+      return null;
+    }
+  };
+
+  const clearCurrentWindow = () => {
+    const previous = bot.currentWindow;
+    bot.currentWindow = null;
+    pendingOpenWindow = null;
+    pendingOpenEmitWindowId = null;
+    if (previous) {
+      bot.emit('windowClose', previous);
+    }
+    return previous;
+  };
+
+  const onOpenWindow = (packet) => {
+    if (!packet || !Number.isInteger(packet.windowId)) return;
+
+    pendingOpenWindow = null;
+    pendingOpenEmitWindowId = null;
+    // 服务器可能没关旧窗口就开了新的(换界面): 先按关闭处理, 保证 currentWindow 只有一个
+    if (bot.currentWindow) {
+      clearCurrentWindow();
+    }
+
+    const window = createWindow(packet, undefined);
+    if (!window) {
+      // 1.20.2+ 的 open_window 没有 slotCount: 未知类型只能等物品包反推
+      pendingOpenWindow = {
+        windowId: packet.windowId,
+        inventoryType: packet.inventoryType,
+        windowTitle: packet.windowTitle
+      };
+      return;
+    }
+
+    bot.currentWindow = window;
+    pendingOpenEmitWindowId = window.id;
   };
 
   const onWindowItems = (packet) => {
-    if (!packet || packet.windowId !== 0) return;
-    const window = bot.inventory;
-    for (let i = 0; i < packet.items.length; ++i) {
-      window.updateSlot(i, Item.fromNotch(packet.items[i]));
+    if (!packet || !Number.isInteger(packet.windowId)) return;
+
+    let window = resolveWindow(packet.windowId);
+
+    if (!window && pendingOpenWindow && pendingOpenWindow.windowId === packet.windowId) {
+      const created = createWindow(pendingOpenWindow, Array.isArray(packet.items) ? packet.items.length : undefined);
+      if (created) {
+        pendingOpenWindow = null;
+        applyItems(created, packet.items);
+        bot.currentWindow = created;
+        pendingOpenEmitWindowId = null;
+        bot.emit(`setWindowItems:${created.id}`);
+        bot.emit('windowOpen', created);
+        return;
+      }
     }
-    updateHeldItem();
+
+    if (!window) return;
+
+    applyItems(window, packet.items);
     bot.emit(`setWindowItems:${window.id}`);
+
+    if (pendingOpenEmitWindowId === window.id) {
+      pendingOpenEmitWindowId = null;
+      bot.emit('windowOpen', window);
+    }
   };
 
   const onSetSlot = (packet) => {
-    if (!packet || packet.windowId !== 0) return;
-    const window = bot.inventory;
+    if (!packet || !Number.isInteger(packet.windowId)) return;
+    const window = resolveWindow(packet.windowId);
+    if (!window) return;
     const newItem = Item.fromNotch(packet.item);
     setSlot(packet.slot, newItem, window);
+  };
+
+  const onCloseWindow = () => {
+    clearCurrentWindow();
+  };
+
+  // 跨子服(re-login)时服务器不会补发 close_window, 与 mineflayer 一样本地关闭
+  const onLogin = () => {
+    clearCurrentWindow();
   };
 
   const onHeldItemSlot = (packet) => {
@@ -72,8 +199,12 @@ function attachLightInventory(bot, hooks = {}) {
 
   addListener(bot._client, 'window_items', trackStateId);
   addListener(bot._client, 'set_slot', trackStateId);
+  addListener(bot._client, 'open_window', onOpenWindow);
+  addListener(bot._client, 'open_screen', onOpenWindow); // 后续协议若改名, 同一处理
   addListener(bot._client, 'window_items', onWindowItems);
   addListener(bot._client, 'set_slot', onSetSlot);
+  addListener(bot._client, 'close_window', onCloseWindow);
+  addListener(bot._client, 'login', onLogin);
   addListener(bot._client, 'held_item_slot', onHeldItemSlot);
 
   function setSlot(slotId, newItem, window = bot.inventory) {
@@ -125,7 +256,7 @@ function attachLightInventory(bot, hooks = {}) {
 
     bot._client.write('window_click', {
       windowId: window.id,
-      stateId,
+      stateId: getStateId(window.id),
       slot,
       mouseButton,
       mode,
@@ -135,10 +266,18 @@ function attachLightInventory(bot, hooks = {}) {
   }
 
   function closeWindow(window) {
+    if (!window) return;
+
     bot._client.write('close_window', {
       windowId: window.id
     });
-    bot.emit('windowClose', window);
+
+    // 本地立即清空(服务器随后回 close_window 时 currentWindow 已为 null, 不会重复发事件)
+    if (bot.currentWindow && bot.currentWindow.id === window.id) {
+      clearCurrentWindow();
+    } else {
+      bot.emit('windowClose', window);
+    }
   }
 
   // 把选中的物品放回 window 的 [start,end) 范围(来自 mineflayer putSelectedItemRange)
@@ -296,7 +435,7 @@ function attachLightInventory(bot, hooks = {}) {
   log('[BOT] lightweight inventory core attached (zero entity dependency)');
 
   return {
-    getStateId: () => stateId
+    getStateId: (windowId) => getStateId(Number.isInteger(windowId) ? windowId : 0)
   };
 }
 

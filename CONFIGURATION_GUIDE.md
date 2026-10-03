@@ -873,6 +873,7 @@ ServerOwner
 | --- | --- | --- | --- |
 | `capabilities.entityHandling` | boolean | `true` | 是否启用实体相关能力 |
 | `capabilities.terrainHandling` | boolean | `true` | 是否启用地形/区块相关能力 |
+| `capabilities.inventoryHandling` | boolean | `true` | 是否启用背包相关能力（轻量模式下控制是否装载零实体背包核心） |
 
 效果简述：
 
@@ -883,6 +884,13 @@ ServerOwner
 - `terrainHandling=false`
   - 禁用 `goto`、`useblock`、`dig`、`vault`、`cplace`
   - 关闭地形相关录制与功能
+
+轻量模式（`entityHandling=false` 且 `terrainHandling=false`）：
+
+- 不再加载处理区块/实体/物理的插件，避免跨版本挂机时的解析与内存开销
+- **仍然可用**：自身背包（`inv` 系列命令）、**服务器主动打开的窗口／自定义菜单**（面板可查看、`chest info|move|close`、面板"关闭窗口"），以及聊天、脚本调度等
+- **不可用**：走位（`goto` 等）、进食、对着方块开箱子、实体交互（这些需要地形或实体数据）
+- 服务器菜单的窗口标题会随快照一起返回；未识别的自定义菜单类型按容器槽位数展示
 
 ### 4.6 `display`
 

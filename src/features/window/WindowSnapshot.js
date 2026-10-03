@@ -9,6 +9,12 @@ const WINDOW_TYPE_NAMES = {
   'minecraft:furnace': 'furnace'
 };
 
+// 通用容器尺寸 -> 面板已有背景图的名称(27=3 行箱子, 54=6 行大箱子)
+const GENERIC_SIZE_NAMES = {
+  27: 'chest',
+  54: 'large-chest'
+};
+
 function normalizeWindowType(type) {
   if (typeof type !== 'string' || type.length === 0) {
     return '';
@@ -20,6 +26,48 @@ function normalizeWindowType(type) {
 function getWindowName(type) {
   const normalized = normalizeWindowType(type);
   return WINDOW_TYPE_NAMES[normalized] || null;
+}
+
+// 服务器自定义菜单(资源包/插件注册的 menu 类型)不在已知表里: 按容器槽位数给出可读名,
+// 27/54 槽直接当作箱子/大箱子(面板有对应背景图), 其余给出 generic_9xN 作为标签。
+function getDerivedWindowName(containerSlots) {
+  if (!Number.isInteger(containerSlots) || containerSlots <= 0) {
+    return null;
+  }
+
+  if (GENERIC_SIZE_NAMES[containerSlots]) {
+    return { name: GENERIC_SIZE_NAMES[containerSlots], supported: true };
+  }
+
+  const rows = containerSlots / 9;
+  if (Number.isInteger(rows) && rows >= 1 && rows <= 6) {
+    return { name: `generic_9x${rows}`, supported: false };
+  }
+
+  return null;
+}
+
+// 窗口标题(服务器菜单名): 复用聊天的组件渲染, 处理 text/extra/translate 等形态
+function renderWindowTitle(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  try {
+    const { parseChatMessage } = require('../chat/ChatFeature');
+    const rendered = parseChatMessage(value);
+    if (rendered) {
+      return rendered;
+    }
+  } catch (error) {
+    // 标题渲染失败不影响窗口展示
+  }
+
+  return typeof value.text === 'string' ? value.text : null;
 }
 
 function serializeItem(item) {
@@ -49,7 +97,18 @@ function buildWindowSnapshot(window) {
   }
 
   const type = typeof window.type === 'string' ? window.type : '';
-  const name = getWindowName(type);
+  const inventoryStart = Number.isInteger(window.inventoryStart) ? window.inventoryStart : 0;
+  let name = getWindowName(type);
+  let supported = name !== null;
+
+  if (!name) {
+    const derived = getDerivedWindowName(inventoryStart);
+    if (derived) {
+      name = derived.name;
+      supported = derived.supported;
+    }
+  }
+
   const slots = Array.isArray(window.slots)
     ? window.slots
         .map((item) => serializeItem(item))
@@ -59,8 +118,9 @@ function buildWindowSnapshot(window) {
   return {
     id: Number.isInteger(window.id) ? window.id : null,
     name: name || type || 'unknown',
-    supported: name !== null,
-    inventoryStart: Number.isInteger(window.inventoryStart) ? window.inventoryStart : 0,
+    supported,
+    title: renderWindowTitle(window.title),
+    inventoryStart,
     inventoryEnd: Number.isInteger(window.inventoryEnd) ? window.inventoryEnd : 0,
     slots
   };
