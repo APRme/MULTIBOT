@@ -3,6 +3,28 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 const { ChatFeature, parseChatMessage } = require('../src/features/chat/ChatFeature');
 
+test('parseChatMessage keeps extra content of a translate argument', () => {
+  // 服务端把"称号 + 真名"放在同一组件里(根 text + extra): 只取 text 会丢名字
+  const parsed = parseChatMessage({
+    translate: '<%s> %s',
+    with: [
+      { text: '「铃」', extra: [{ text: '_Yaye_' }] },
+      { text: '我发的投影' }
+    ]
+  });
+
+  assert.equal(parsed, '<「铃」_Yaye_> 我发的投影');
+});
+
+test('parseChatMessage renders ChatMessage instances appended by team code', () => {
+  const registry = require('prismarine-registry')('1.21.11');
+  const ChatMessage = require('prismarine-chat')(registry);
+  const display = new ChatMessage({ text: '「铃」', color: 'gold' }).clone();
+  display.append(new ChatMessage({ text: 'Ling_x', color: 'white' }), new ChatMessage({ text: '[镇]' }));
+
+  assert.equal(parseChatMessage(display), '「铃」Ling_x[镇]');
+});
+
 test('parseChatMessage preserves spaces from nested chat fragments', () => {
   const parsed = parseChatMessage({
     text: '「name1」-',
@@ -137,6 +159,21 @@ function createChatFeatureForDisplay(options = {}) {
   return { feature, logs, activityLogs };
 }
 
+// 真实 mineflayer 的 Team.displayName() 返回的是 ChatMessage 实例:
+//   const name = this.prefix.clone(); name.append(new ChatMessage({ text: member, color }), this.suffix); return name
+// 关键点: append() 不会更新 .json(仍停在根组件), 追加内容只存在于实例自身的 text/extra 里。
+// 这里按真实语义构造, 避免 mock 形状与线上不一致而掩盖渲染缺陷。
+function realTeamDisplayName(prefixText, suffixText, member) {
+  const registry = require('prismarine-registry')('1.21.11');
+  const ChatMessage = require('prismarine-chat')(registry);
+  const display = new ChatMessage({ text: prefixText, color: 'gold' }).clone();
+  display.append(
+    new ChatMessage({ text: member, color: 'white' }),
+    new ChatMessage({ text: suffixText, color: 'gray' })
+  );
+  return display;
+}
+
 function fakeTeam(prefix) {
   return {
     displayName(member) {
@@ -144,6 +181,41 @@ function fakeTeam(prefix) {
     }
   };
 }
+
+// 与线上一致: 返回 ChatMessage 实例(prefix + 玩家名 + suffix)
+function chatMessageTeam(prefixText, suffixText = '') {
+  return {
+    displayName(member) {
+      return realTeamDisplayName(prefixText, suffixText, member);
+    }
+  };
+}
+
+test('ChatFeature keeps the player name when the team returns a ChatMessage instance', async () => {
+  const { feature, logs, activityLogs } = createChatFeatureForDisplay({
+    bot: { teamMap: { playerName: chatMessageTeam('「铃」', '[铃音镇]') } }
+  });
+
+  await feature.handleMessage({
+    translate: '<%s> %s',
+    with: ['playerName', { text: '我发的投影' }]
+  });
+
+  // 回归: 曾经 append() 的内容被 .json 递归丢掉, 只剩前缀 => '<「铃」> 我发的投影'
+  assert.deepEqual(logs, ['[CHAT] <「铃」playerName[铃音镇]> 我发的投影']);
+  assert.deepEqual(activityLogs, ['<「铃」playerName[铃音镇]> 我发的投影']);
+});
+
+test('ChatFeature decorates ChatMessage-style teams on non-template lines too', async () => {
+  const { feature, logs } = createChatFeatureForDisplay({
+    bot: { teamMap: { playerName: chatMessageTeam('「缘」') } }
+  });
+
+  // 死亡/系统行没有尖括号: 名字在行首, 同样不能丢
+  await feature.handleMessage({ translate: 'death.attack.outOfWorld', with: ['playerName'] });
+
+  assert.deepEqual(logs, ['[CHAT] 「缘」playerName 死了 [death.attack.outOfWorld]']);
+});
 
 test('ChatFeature decorates the sender with its scoreboard team prefix', async () => {
   const { feature, logs, activityLogs } = createChatFeatureForDisplay({

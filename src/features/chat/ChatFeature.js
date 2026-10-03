@@ -6,6 +6,16 @@ function renderChatMessage(value) {
   }
 
   if (value.json) {
+    // ChatMessage 实例形态: mineflayer 的 Team.displayName() 是 prefix.clone() 后 append(玩家名, 后缀),
+    // 而 append() 只写进实例自身的结构, .json 仍停在根组件(只有前缀) —— 直接递归 .json 会把玩家名丢掉。
+    // 因此实例自带 extra 时以"实例的 text + extra"为准。
+    if (Array.isArray(value.extra) && value.extra.length > 0) {
+      const head = typeof value.text === 'string'
+        ? removeMinecraftFormatting(value.text)
+        : renderChatMessage(value.json);
+      return `${head}${renderChatExtra(value.extra)}`;
+    }
+
     return renderChatMessage(value.json);
   }
 
@@ -84,22 +94,19 @@ function renderChatArgument(value) {
   if (typeof value === 'string') return removeMinecraftFormatting(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
 
+  // 带 extra 或实例形态(json)的参数必须整体渲染: 只取 text 会丢掉 extra 里的内容,
+  // 例如 { text: '「铃」', extra: [{ text: '真实名' }] } 或 ChatMessage 实例。
+  if (value.json || Array.isArray(value.extra)) {
+    const rendered = renderChatMessage(value);
+    if (rendered) return rendered;
+  }
+
   if (typeof value.text === 'string' && value.text.length > 0) {
     return removeMinecraftFormatting(value.text);
   }
 
   if (typeof value[''] === 'string' && value[''].length > 0) {
     return removeMinecraftFormatting(value['']);
-  }
-
-  if (Array.isArray(value.extra)) {
-    const rendered = renderChatExtra(value.extra);
-    if (rendered) return rendered;
-  }
-
-  if (value.json) {
-    const rendered = renderChatMessage(value.json);
-    if (rendered) return rendered;
   }
 
   if (value.translate === 'chat.square_brackets' && Array.isArray(value.with) && value.with.length > 0) {
