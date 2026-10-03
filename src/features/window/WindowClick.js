@@ -130,9 +130,11 @@ function isValidModeButton(mode, mouseButton) {
 }
 
 // 能否用 prismarine-windows 做本地预测。
-// 它不接受副手交换(40)与拖拽起始(0/4/8), 这两种情况只发包、不预测(等服务器回包纠正)。
+// 它不接受副手交换(40)与拖拽起始(0/4/8); 双击收集(mode 6)的 doubleClick 在 prismarine 里是 unimplemented。
+// 以上情况只发包、不预测(服务端总会回发真实槽位, 本地状态自动纠正)。
 function canPredictLocally(mode, mouseButton) {
   if (!isValidModeButton(mode, mouseButton)) return false;
+  if (mode === CLICK_MODES.PICKUP_ALL) return false;
   if (mode === CLICK_MODES.SWAP && mouseButton > 8) return false;
   if (mode === CLICK_MODES.QUICK_CRAFT && [0, 4, 8].includes(mouseButton)) return false;
   return true;
@@ -269,14 +271,24 @@ function createWindowClicker(bot, hooks = {}) {
     }
   }
 
-  // 本地预测: 调用原版菜单逻辑(acceptClick), 再按"槽位内容是否变化"得出 changedSlots —— 与原版一致
+  // 本地预测: 调用原版菜单逻辑(acceptClick), 再按"槽位内容是否变化"得出 changedSlots —— 与原版一致。
+  // 注意: acceptClick 合并同类物品时是**原地修改 count**(不替换对象), 因此快照必须按值深拷贝,
+  // 否则差异检测会漏报(与 mineflayer 的 JSON 深拷贝回退路径同理)。
+  function cloneSlots(slots) {
+    try {
+      return JSON.parse(JSON.stringify(slots));
+    } catch (error) {
+      return slots.slice();
+    }
+  }
+
   function predictLocal(window, click) {
     if (!canPredictLocally(click.mode, click.mouseButton) || typeof window.acceptClick !== 'function') {
       return { predicted: false, changedSlots: [], cursorChanged: false };
     }
 
-    const beforeSlots = window.slots.slice();
-    const beforeCursor = window.selectedItem || null;
+    const beforeSlots = cloneSlots(window.slots);
+    const beforeCursor = window.selectedItem ? cloneSlots([window.selectedItem])[0] : null;
 
     try {
       window.acceptClick({

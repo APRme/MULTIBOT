@@ -128,10 +128,11 @@ test('mode/button legality matches vanilla and prediction limits', () => {
   assert.equal(isValidModeButton(CLICK_MODES.QUICK_CRAFT, 3), false);
   assert.equal(isValidModeButton(7, 0), false);
 
-  // prismarine-windows 不接受副手交换与拖拽起始 => 这两种只发包不预测
+  // prismarine-windows 不接受副手交换与拖拽起始, 双击收集(doubleClick)在其内部是 unimplemented
   assert.equal(canPredictLocally(CLICK_MODES.SWAP, OFFHAND_SWAP_BUTTON), false);
   assert.equal(canPredictLocally(CLICK_MODES.QUICK_CRAFT, 0), false);
   assert.equal(canPredictLocally(CLICK_MODES.QUICK_CRAFT, 1), true);
+  assert.equal(canPredictLocally(CLICK_MODES.PICKUP_ALL, 0), false);
   assert.equal(canPredictLocally(CLICK_MODES.PICKUP, 0), true);
 });
 
@@ -297,6 +298,29 @@ test('set_cursor_item updates the window cursor item', () => {
     bot._client.emit('set_cursor_item', { contents: { itemCount: 0, components: [], removeComponents: [] } });
     assert.equal(window.selectedItem, null);
     assert.equal(events.length, 2);
+  } finally {
+    dispose();
+  }
+});
+
+test('prediction detects in-place count merges (deep snapshot)', () => {
+  const { bot, clicker, windowsLib, dispose } = createHarness();
+  try {
+    const Item = ItemLib(bot.registry);
+    const registry = bot.registry;
+    const window = windowsLib.createWindow(12, 'minecraft:generic_9x3', 'Menu');
+    window.updateSlot(0, new Item(registry.itemsByName.diamond.id, 32));
+    bot.currentWindow = window;
+    bot._client.emit('window_items', { windowId: 12, items: [], stateId: 6 });
+
+    // 光标先拿一组, 再左键合并到同类槽 => acceptClick 原地改 count, 必须仍被检出
+    window.selectedItem = new Item(registry.itemsByName.diamond.id, 31);
+    const result = clicker.clickAction('left', { slot: 0 });
+
+    assert.equal(result.predicted, true);
+    assert.deepEqual(result.changedSlots, [0], '原地合并也要算作变更');
+    assert.equal(result.cursorChanged, true);
+    assert.equal(window.slots[0].count, 63);
   } finally {
     dispose();
   }

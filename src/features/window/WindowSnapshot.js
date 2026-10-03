@@ -47,27 +47,89 @@ function getDerivedWindowName(containerSlots) {
   return null;
 }
 
-// 窗口标题(服务器菜单名): 复用聊天的组件渲染, 处理 text/extra/translate 等形态
+// 窗口标题(服务器菜单名)。
+// minecraft-protocol 的 anonymousNbt 给的是未简化的 NBT({type:'compound',value:{...}}), 先简化;
+// 然后按需求: 有自定义名称({text})就用自定义名称, 只有翻译键({translate})时直接用键名(如 container.chest),
+// 不做译名查表; translate 携带的参数(with)与 extra 追加在后面。
+function simplifyWindowTitle(value) {
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  // 未简化 NBT 结构: { type: 'compound', value: {...} }
+  if (typeof value.type === 'string' && value.value !== undefined) {
+    try {
+      const nbt = require('prismarine-nbt');
+      return nbt.simplify(value);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  return value;
+}
+
+function renderTitleComponent(component) {
+  if (component == null) {
+    return '';
+  }
+
+  if (typeof component === 'string') {
+    return component;
+  }
+
+  if (Array.isArray(component)) {
+    return component.map((part) => renderTitleComponent(part)).join('');
+  }
+
+  if (typeof component !== 'object') {
+    return String(component);
+  }
+
+  const parts = [];
+  const isTranslate = typeof component.translate === 'string';
+
+  if (typeof component.text === 'string') {
+    parts.push(component.text);
+  }
+
+  if (isTranslate) {
+    parts.push(component.translate);
+    if (Array.isArray(component.with)) {
+      const args = component.with.map((part) => renderTitleComponent(part)).filter((text) => text.length > 0);
+      if (args.length > 0) {
+        parts.push(args.join(' '));
+      }
+    }
+  }
+
+  if (Array.isArray(component.extra)) {
+    const extras = component.extra.map((part) => renderTitleComponent(part)).filter((text) => text.length > 0);
+    if (extras.length > 0) {
+      parts.push(isTranslate ? extras.join(' ') : extras.join(''));
+    }
+  }
+
+  return parts.join(isTranslate ? ' ' : '');
+}
+
 function renderWindowTitle(value) {
   if (!value) {
     return null;
   }
 
   if (typeof value === 'string') {
-    return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
-  try {
-    const { parseChatMessage } = require('../chat/ChatFeature');
-    const rendered = parseChatMessage(value);
-    if (rendered) {
-      return rendered;
-    }
-  } catch (error) {
-    // 标题渲染失败不影响窗口展示
+  const component = simplifyWindowTitle(value);
+  if (!component) {
+    return null;
   }
 
-  return typeof value.text === 'string' ? value.text : null;
+  const rendered = renderTitleComponent(component).replace(/\s+/g, ' ').trim();
+  return rendered.length > 0 ? rendered : null;
 }
 
 function serializeItem(item) {

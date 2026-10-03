@@ -154,3 +154,35 @@ test('buildWindowSnapshot returns null without a window', () => {
   assert.equal(buildWindowSnapshot(null), null);
   assert.equal(buildWindowSnapshot(undefined), null);
 });
+
+test('window title: custom name wins, translate key is used verbatim', () => {
+  // 自定义名称(text 组件)
+  assert.equal(buildWindowSnapshot({ id: 1, type: 'minecraft:generic_9x3', title: { text: '商店' }, slots: [] }).title, '商店');
+
+  // 纯字符串标题
+  assert.equal(buildWindowSnapshot({ id: 1, type: 'minecraft:generic_9x3', title: '我的箱子', slots: [] }).title, '我的箱子');
+
+  // 翻译键: 直接用键名(不查译名, 也不带 [key] 噪声)
+  assert.equal(buildWindowSnapshot({ id: 1, type: 'minecraft:generic_9x3', title: { translate: 'container.chest' }, slots: [] }).title, 'container.chest');
+
+  // 未简化 NBT(真实服务器下发的形态)
+  const nbtTitle = {
+    type: 'compound',
+    value: { translate: { type: 'string', value: 'container.chest' } }
+  };
+  assert.equal(buildWindowSnapshot({ id: 1, type: 'minecraft:generic_9x3', title: nbtTitle, slots: [] }).title, 'container.chest');
+
+  // NBT 自定义名称 + extra
+  const nbtCustom = {
+    type: 'compound',
+    value: {
+      text: { type: 'string', value: '商店' },
+      extra: { type: 'list', value: { type: 'string', value: [' 二层'] } }
+    }
+  };
+  assert.equal(buildWindowSnapshot({ id: 1, type: 'minecraft:generic_9x3', title: nbtCustom, slots: [] }).title, '商店 二层');
+
+  // 无标题 / 空标题
+  assert.equal(buildWindowSnapshot({ id: 1, type: 'minecraft:generic_9x3', slots: [] }).title, null);
+  assert.equal(buildWindowSnapshot({ id: 1, type: 'minecraft:generic_9x3', title: '   ', slots: [] }).title, null);
+});

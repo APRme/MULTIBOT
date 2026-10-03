@@ -348,6 +348,8 @@ class WindowFeature {
     context.replyInfo('chest <info|click|swap|drag|move|close|help>');
     context.replyInfo('  chest info - 查看当前窗口信息');
     context.replyInfo('  chest click <槽位> [left|right|shift|shift-right|drop|dropstack|collect|clone] - 单次点击(默认 left)');
+    context.replyInfo('    collect(双击收集) 要求目标格为空: 先拿起一格, 再对已空的那格双击');
+    context.replyInfo('    drop/dropstack 要求光标为空(与原版一致, 否则服务端不处理)');
     context.replyInfo('  chest swap <槽位> <1-9|offhand> - 与快捷栏/副手交换');
     context.replyInfo('  chest drag <start|add|end> [槽位] [left|right|middle] - 拖拽分发物品');
     context.replyInfo('  chest move <源槽位> <目标槽位> [数量] - 移动/拆分物品（槽位为窗口原始索引）');
