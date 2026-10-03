@@ -41,6 +41,9 @@ const { getTimestamp } = require('../util/time');
 
 const OPEN_AUTH_REQUEST_WATCHDOG_MS = 10000;
 
+// 协议保护吞掉解析异常后, 多久收不到包就判定会话失联并重连(可用 protocolGuard.desyncSilenceMs 覆盖, 0 关闭)
+const DEFAULT_DESYNC_SILENCE_MS = 8000;
+
 // 空 lastSeen 窗口上报用的 checksum: 原版 LastSeenMessages.Update.IGNORE_CHECKSUM = 0,
 // verifyChecksum() 里 `checksum == 0 || checksum == computeChecksum()` —— 0 表示"跳过校验",
 // 因此无论服务端窗口内容如何, 这个值都被接受(比空集合的 1 更稳)。
@@ -485,6 +488,8 @@ class BotRuntime {
     this.barkNotifier = options.barkNotifier || null;
     this.lastBarkAuthNotifyAt = 0;
     this.decompressorErrorGuarded = new WeakSet();
+    this.desyncWatchdogTimer = null;
+    this.desyncWatchdogEpoch = null;
     this.protocolErrorLogPath = null; // 为空时默认 <cwd>/logs/protocol-errors.log
     this.diagnostics = {
       connectionCount: 0,
@@ -1356,6 +1361,92 @@ class BotRuntime {
     }
   }
 
+  // 协议保护会把"物品堆/组件 NBT 解析异常"这类包吞掉(只发 malformed_packet_ignored, 不报错不重连)。
+  // 单包被丢弃通常无害, 但实测出现过: 吞掉之后连接再也收不到任何包, 一直拖到 35s 保活超时 + 30s 收尾。
+  // 这里补两件事:
+  //   1) 归类成一行精简日志(不再把整段 protodef 栈当正文), 并落盘 protocol-errors.log
+  //   2) 静默看门狗: 从吞包起若 desyncSilenceMs 内没收到任何包, 判定会话已失联, 主动断开本连接由重连策略拉起
+  attachProtocolParseGuard(bot) {
+    const client = bot && bot._client;
+    if (!client || typeof client.on !== 'function') return;
+
+    const deserializer = client.deserializer;
+    if (deserializer && typeof deserializer.on === 'function') {
+      this.addRuntimeListener(deserializer, 'malformed_packet_ignored', (info) => {
+        this.handleIgnoredMalformedPacket(bot, info);
+      });
+    }
+
+    // 只要还有包进来就说明连接活着 => 撤销看门狗
+    this.addRuntimeListener(client, 'packet', () => {
+      this.clearDesyncWatchdog();
+    });
+
+    this.runtimeListenerDisposers.push(() => {
+      this.clearDesyncWatchdog();
+    });
+  }
+
+  handleIgnoredMalformedPacket(bot, info) {
+    const detail = info && typeof info === 'object' ? info : {};
+    const errorMessage = String(detail.errorMessage || '').split('\n')[0].slice(0, 200);
+    const summary = `packetId=${detail.packetId} chunk=${detail.chunkLength}B 已忽略第 ${detail.ignoredCount}/${detail.burstLimit} 个(${detail.burstWindowMs}ms 窗口) ${errorMessage}`;
+
+    if (this.protocolGuardConfig.logParseErrors !== false) {
+      this.logger.warn(`[PROTOCOL] 解析异常已忽略(协议保护): ${summary}`);
+    }
+
+    this.appendProtocolErrorLog(`${getTimestamp()} [${this.config.id}] parse error ignored ${summary}`);
+    this.armDesyncWatchdog(bot, summary);
+  }
+
+  armDesyncWatchdog(bot, summary) {
+    const configured = this.protocolGuardConfig.desyncSilenceMs;
+    // 未配置时用内置默认(运行时的 protocolGuardConfig 可能是未归一化的原始对象); 显式 0 表示关闭
+    const silenceMs = configured === 0
+      ? 0
+      : (Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_DESYNC_SILENCE_MS);
+    if (silenceMs <= 0) {
+      return;
+    }
+
+    this.clearDesyncWatchdog();
+    this.desyncWatchdogTimer = setTimeout(() => {
+      this.desyncWatchdogTimer = null;
+      if (this.connectionEpoch !== this.desyncWatchdogEpoch) {
+        return;
+      }
+
+      const line = `${getTimestamp()} [${this.config.id}] protocol desync: 解析异常后 ${silenceMs}ms 内无任何数据, 主动断开重连 (${summary})`;
+      this.logger.warn(`[PROTOCOL] 解析异常后 ${silenceMs}ms 内无任何数据, 判定会话已失联: 断开本连接重连`);
+      this.appendProtocolErrorLog(line);
+
+      // 只终止本连接, 由现有断线重连策略拉起; 不影响其他 bot
+      try {
+        const target = (bot && typeof bot.quit === 'function') ? bot : this.bot;
+        if (target && typeof target.quit === 'function') {
+          target.quit('protocol_desync');
+        } else if (bot && bot._client && typeof bot._client.end === 'function') {
+          bot._client.end('protocol_desync');
+        }
+      } catch (closeError) {
+        this.logger.warn('[PROTOCOL] failed to close broken connection', closeError && closeError.message);
+      }
+    }, silenceMs);
+
+    this.desyncWatchdogEpoch = this.connectionEpoch;
+    if (typeof this.desyncWatchdogTimer.unref === 'function') {
+      this.desyncWatchdogTimer.unref();
+    }
+  }
+
+  clearDesyncWatchdog() {
+    if (this.desyncWatchdogTimer) {
+      clearTimeout(this.desyncWatchdogTimer);
+      this.desyncWatchdogTimer = null;
+    }
+  }
+
   appendProtocolErrorLog(line) {
     const filePath = this.protocolErrorLogPath || path.join(process.cwd(), 'logs', 'protocol-errors.log');
     try {
@@ -1776,13 +1867,9 @@ class BotRuntime {
         });
       }
 
-      if (bot._client.deserializer) {
-        this.addRuntimeListener(bot._client.deserializer, 'malformed_packet_ignored', (info) => {
-          if (this.protocolGuardConfig.logParseErrors !== false) {
-            this.logger.warn('[PROTOCOL]', info);
-          }
-        });
-      }
+      // 协议保护吞掉解析异常后(见 protocol-guard-hotfix), 连接可能进入"收不到包"的假死:
+      // 这里做归类日志 + 静默看门狗, 超时即主动重连, 不必等 35s 保活 + 30s 收尾
+      this.attachProtocolParseGuard(bot);
 
       // 解压流(zlib/varint)错误在 minecraft-protocol 无监听会直接 uncaught 崩进程:
       // 接住 -> 记日志+落盘 -> 仅断开该 bot 重连

@@ -302,7 +302,10 @@ function normalizeProtocolGuardConfig(rawConfig) {
     ignoreMalformedNbtArrayPackets: source.ignoreMalformedNbtArrayPackets !== false,
     burstLimit: normalizePositiveInteger(source.burstLimit, 20),
     burstWindowMs: normalizePositiveInteger(source.burstWindowMs, 60000),
-    logParseErrors: source.logParseErrors !== false
+    logParseErrors: source.logParseErrors !== false,
+    // 被协议保护吞掉的解析异常(如 Slot/组件 NBT)之后若这么久收不到任何包, 判定会话已失联并主动重连;
+    // 0 表示关闭该看门狗(退回等保活超时)
+    desyncSilenceMs: source.desyncSilenceMs === 0 ? 0 : normalizePositiveInteger(source.desyncSilenceMs, 8000)
   };
 }
 

@@ -1546,6 +1546,106 @@ test('BotRuntime attachUnsignedChatWindowGuard skips versions without the ack wi
   assert.equal(writes[0].params.offset, 3, '不介入旧协议');
 });
 
+test('BotRuntime desync watchdog reconnects when nothing arrives after an ignored parse error', async () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    },
+    protocolGuardConfig: { logParseErrors: true, desyncSilenceMs: 60 }
+  });
+
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-desync-'));
+  const logFile = path.join(logDir, 'protocol-errors.log');
+  runtime.protocolErrorLogPath = logFile;
+
+  const client = new EventEmitter();
+  client.deserializer = new EventEmitter();
+  client.state = 'play';
+  const quitReasons = [];
+  const bot = {
+    _client: client,
+    quit: (reason) => quitReasons.push(reason)
+  };
+
+  runtime.attachProtocolParseGuard(bot);
+
+  // 协议保护吞掉一个 Slot/组件 NBT 解析异常
+  client.deserializer.emit('malformed_packet_ignored', {
+    packetId: 16,
+    chunkLength: 512,
+    ignoredCount: 1,
+    burstLimit: 20,
+    burstWindowMs: 60000,
+    errorMessage: 'Read error for undefined : array size is abnormally large, not reading: 591808068'
+  });
+
+  assert.deepEqual(quitReasons, [], '刚吞包时不应立即断开');
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(quitReasons, ['protocol_desync'], '静默超时后主动断开重连');
+  assert.match(fs.readFileSync(logFile, 'utf8'), /parse error ignored .*array size is abnormally large/);
+});
+
+test('BotRuntime desync watchdog is cancelled once another packet arrives', async () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    },
+    protocolGuardConfig: { logParseErrors: false, desyncSilenceMs: 80 }
+  });
+
+  const client = new EventEmitter();
+  client.deserializer = new EventEmitter();
+  client.state = 'play';
+  const quitReasons = [];
+  const bot = { _client: client, quit: (reason) => quitReasons.push(reason) };
+
+  runtime.attachProtocolParseGuard(bot);
+  client.deserializer.emit('malformed_packet_ignored', { ignoredCount: 1, errorMessage: 'x' });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  client.emit('packet', {}, { name: 'keep_alive' }); // 连接还活着
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(quitReasons, [], '期间收到包 => 不重连');
+});
+
+test('BotRuntime desync watchdog can be disabled and falls back to a built-in default', async () => {
+  const disabled = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    },
+    protocolGuardConfig: { logParseErrors: false, desyncSilenceMs: 0 }
+  });
+
+  const clientA = new EventEmitter();
+  clientA.deserializer = new EventEmitter();
+  clientA.state = 'play';
+  const quitA = [];
+  disabled.attachProtocolParseGuard({ _client: clientA, quit: (reason) => quitA.push(reason) });
+  clientA.deserializer.emit('malformed_packet_ignored', { ignoredCount: 1, errorMessage: 'x' });
+  assert.equal(disabled.desyncWatchdogTimer, null, 'desyncSilenceMs=0 时不设看门狗');
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(quitA, []);
+
+  // 未配置该项时使用内置默认值(不会静默失效)
+  const fallback = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    },
+    protocolGuardConfig: { logParseErrors: false }
+  });
+
+  const clientB = new EventEmitter();
+  clientB.deserializer = new EventEmitter();
+  clientB.state = 'play';
+  fallback.attachProtocolParseGuard({ _client: clientB, quit: () => {} });
+  clientB.deserializer.emit('malformed_packet_ignored', { ignoredCount: 1, errorMessage: 'x' });
+  assert.notEqual(fallback.desyncWatchdogTimer, null, '未配置时用内置默认(8s)');
+  fallback.clearDesyncWatchdog();
+  assert.equal(fallback.desyncWatchdogTimer, null);
+});
+
 test('BotRuntime executes lock-after-expire command when online', () => {
   const chats = [];
   const runtime = createRuntime({

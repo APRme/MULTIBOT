@@ -140,6 +140,22 @@ MULTIBOT/
    - 归一化主配置
 3. `applyProtocolGuardHotfix()`
    - 应用协议防护热修
+
+### 协议保护与失联恢复
+
+`applyProtocolGuardHotfix()` 会改写 `FullPacketParser.prototype._transform`：遇到已知的畸形包
+（物品堆/组件 NBT，例如 `SlotComponent + array size is abnormally large`）时**吞掉该包**并发出
+`malformed_packet_ignored`，避免整条连接报错退出。
+
+`BotRuntime.attachProtocolParseGuard()` 在此基础上补两件事：
+
+- **归类日志**：把该事件收敛成一行摘要（packetId/chunk 大小/窗口内第几个/错误首行）并落盘
+  `logs/protocol-errors.log`，不再把整段 protodef 栈当正文
+- **静默看门狗**：吞包后若 `protocolGuard.desyncSilenceMs`（默认 8s）内**收不到任何包**，
+  判定会话已失联（实测会被拖到 35s 保活超时 + 30s 收尾），主动 `quit('protocol_desync')`
+  只断本连接，由现有断线重连策略拉起；期间只要有任意包到达即撤销看门狗。
+  该值与解压流错误处理（`ensureDecompressorErrorGuard`，断开原因 `protocol_decompressor_error`）配套。
+
 4. 创建基础服务
    - `EventStream`
    - `SessionService`

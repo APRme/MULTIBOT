@@ -158,6 +158,7 @@ legacy 显式 bot 没有 `default.config.json` 时，就只剩：
 | `protocolGuard.burstLimit` | integer | `20` | 短窗口内允许的异常包数量 |
 | `protocolGuard.burstWindowMs` | integer | `60000` | 异常包计数窗口，单位毫秒 |
 | `protocolGuard.logParseErrors` | boolean | `true` | 是否打印解析错误日志 |
+| `protocolGuard.desyncSilenceMs` | integer | `8000` | 被协议保护吞掉解析异常后，多少毫秒内收不到任何包就判定会话失联并主动断开重连；`0` 关闭该看门狗（退回等保活超时） |
 
 说明：
 

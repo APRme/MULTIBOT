@@ -81,7 +81,8 @@ test('loadMasterConfig resolves MULTIBOT sessions dir', () => {
     ignoreMalformedNbtArrayPackets: true,
     burstLimit: 20,
     burstWindowMs: 60000,
-    logParseErrors: true
+    logParseErrors: true,
+    desyncSilenceMs: 8000
   });
   assert.deepEqual(masterConfig.diagnostics, {
     cpuProfileOnExit: false,
@@ -532,7 +533,8 @@ test('loadMasterConfig normalizes protocol guard overrides', () => {
     ignoreMalformedNbtArrayPackets: true,
     burstLimit: 8,
     burstWindowMs: 120000,
-    logParseErrors: false
+    logParseErrors: false,
+    desyncSilenceMs: 8000
   });
 });
 
