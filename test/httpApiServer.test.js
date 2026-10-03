@@ -906,6 +906,90 @@ test('HttpApiServer serves inventory snapshot and closes window', async () => {
   }
 });
 
+test('HttpApiServer exposes vanilla-style window click', async () => {
+  const clicks = [];
+
+  const server = new HttpApiServer({
+    apiConfig: {
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token'
+    },
+    botManager: {
+      getBot(id) {
+        if (id !== 'alpha') {
+          return null;
+        }
+
+        return {
+          clickWindowSlot(options) {
+            clicks.push({ kind: 'action', options });
+            return { windowId: 6, slot: options.slot, mouseButton: 0, mode: 0, stateId: 42, predicted: true, changedSlots: [options.slot] };
+          },
+          windowFeature: {
+            clickSlotRaw(options) {
+              clicks.push({ kind: 'raw', options });
+              return { windowId: 6, slot: options.slot, mouseButton: options.button, mode: options.mode, stateId: 42, predicted: false, changedSlots: [] };
+            }
+          }
+        };
+      }
+    },
+    eventStream: {
+      addClient() {}
+    }
+  });
+
+  await server.start();
+  const port = server.server.address().port;
+
+  try {
+    // 语义动作
+    const clickResponse = await makeRequest({
+      port,
+      method: 'POST',
+      path: '/api/bots/alpha/window-click',
+      body: { slot: 13, action: 'shift' }
+    });
+    assert.equal(clickResponse.statusCode, 200);
+    assert.equal(clickResponse.body.ok, true);
+    assert.equal(clickResponse.body.click.slot, 13);
+    assert.equal(clickResponse.body.click.stateId, 42);
+    assert.deepEqual(clicks[0], { kind: 'action', options: { slot: 13, action: 'shift', swapSlot: undefined, button: undefined, dragPhase: undefined } });
+
+    // 原版三元组逃生通道
+    const rawResponse = await makeRequest({
+      port,
+      method: 'POST',
+      path: '/api/bots/alpha/window-click',
+      body: { slot: -999, button: 1, mode: 0 }
+    });
+    assert.equal(rawResponse.statusCode, 200);
+    assert.equal(rawResponse.body.click.mouseButton, 1);
+    assert.deepEqual(clicks[1], { kind: 'raw', options: { slot: -999, button: 1, mode: 0 } });
+
+    // 非法参数 -> 400
+    const badResponse = await makeRequest({
+      port,
+      method: 'POST',
+      path: '/api/bots/alpha/window-click',
+      body: { slot: 'abc', action: 'left' }
+    });
+    assert.equal(badResponse.statusCode, 400);
+    assert.match(badResponse.body.error, /slot/);
+
+    const missingResponse = await makeRequest({
+      port,
+      method: 'POST',
+      path: '/api/bots/missing/window-click',
+      body: { slot: 0, action: 'left' }
+    });
+    assert.equal(missingResponse.statusCode, 404);
+  } finally {
+    await server.stop();
+  }
+});
+
 test('HttpApiServer close-window reports runtime errors', async () => {
   const server = new HttpApiServer({
     apiConfig: {

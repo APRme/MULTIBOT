@@ -1,4 +1,9 @@
 const { buildWindowSnapshot, serializeItem } = require('./WindowSnapshot');
+const {
+  createWindowClicker,
+  resolveClickAction,
+  OUTSIDE_SLOT
+} = require('./WindowClick');
 
 const PATCH_DEBOUNCE_MS = 100;
 
@@ -50,6 +55,7 @@ class WindowFeature {
     this.inventoryListeners = new Set();
     this.pendingPatches = new Map();
     this.patchTimer = null;
+    this.clicker = null;
   }
 
   attach(bot) {
@@ -58,6 +64,12 @@ class WindowFeature {
     if (!bot) {
       return;
     }
+
+    // 原版语义点击器: 跟踪每个窗口最新 stateId + 本地预测 + 按原版字段发包
+    this.clicker = createWindowClicker(bot, {
+      addListener: (target, eventName, handler) => this.on(target, eventName, handler),
+      logger: this.logger
+    });
 
     this.on(bot, 'windowOpen', (window) => {
       this.handleWindowOpen(window);
@@ -83,6 +95,7 @@ class WindowFeature {
     this.clearWindowSlotListeners();
     this.inventoryListeners.clear();
     this.bot = null;
+    this.clicker = null;
   }
 
   on(target, eventName, handler) {
@@ -245,6 +258,43 @@ class WindowFeature {
     return { ok: true, closed: true };
   }
 
+  // 原版语义点击(供命令、HTTP 面板、脚本共用)。
+  // action 支持: left/right/shift/shift-right/drop/drop-stack/collect/clone/swap/drag-*
+  clickSlot({ slot, action = 'left', swapSlot, button, mode, window: targetWindow } = {}) {
+    if (!this.bot || !this.clicker) {
+      throw new Error('窗口模块未初始化');
+    }
+
+    const window = targetWindow || this.bot.currentWindow || this.bot.inventory;
+
+    if (Number.isInteger(mode) && Number.isInteger(button)) {
+      // 逃生通道: 直接按原版三元组点击
+      return this.clicker.click({ window, slot, mouseButton: button, mode, action: action || 'raw' });
+    }
+
+    const resolved = resolveClickAction(action, { slot, swapSlot, button, window });
+    return this.clicker.clickAction(resolved.action, {
+      slot: resolved.slot,
+      swapSlot,
+      button: resolved.dragButton || button,
+      window
+    });
+  }
+
+  clickSlotRaw({ slot, button = 0, mode = 0, window: targetWindow } = {}) {
+    if (!this.bot || !this.clicker) {
+      throw new Error('窗口模块未初始化');
+    }
+
+    return this.clicker.click({
+      window: targetWindow || this.bot.currentWindow || this.bot.inventory,
+      slot,
+      mouseButton: button,
+      mode,
+      action: 'raw'
+    });
+  }
+
   async handleChestCommand(context, trimmed) {
     if (!this.bot) {
       context.replyError('窗口模块未初始化');
@@ -264,6 +314,15 @@ class WindowFeature {
         case 'move':
           await this.handleChestMove(context, args.slice(1));
           break;
+        case 'click':
+          this.handleChestClick(context, args.slice(1));
+          break;
+        case 'swap':
+          this.handleChestSwap(context, args.slice(1));
+          break;
+        case 'drag':
+          this.handleChestDrag(context, args.slice(1));
+          break;
         case 'close': {
           const closed = await this.closeWindow();
           context.replyInfo(closed.closed ? '已关闭当前窗口' : '当前没有打开的窗口');
@@ -282,10 +341,94 @@ class WindowFeature {
   }
 
   replyChestHelp(context) {
-    context.replyInfo('chest <info|move|close|help>');
+    context.replyInfo('chest <info|click|swap|drag|move|close|help>');
     context.replyInfo('  chest info - 查看当前窗口信息');
+    context.replyInfo('  chest click <槽位> [left|right|shift|shift-right|drop|dropstack|collect|clone] - 单次点击(默认 left)');
+    context.replyInfo('  chest swap <槽位> <1-9|offhand> - 与快捷栏/副手交换');
+    context.replyInfo('  chest drag <start|add|end> [槽位] [left|right|middle] - 拖拽分发物品');
     context.replyInfo('  chest move <源槽位> <目标槽位> [数量] - 移动/拆分物品（槽位为窗口原始索引）');
     context.replyInfo('  chest close - 关闭当前窗口');
+    context.replyInfo('槽位 -999 表示窗口外(丢弃光标上的物品)');
+  }
+
+  // 单次点击: 与原版鼠标操作等价, 不做交换、不自动放回(适合"点一下就触发动作"的菜单)
+  handleChestClick(context, args) {
+    if (args.length < 1) {
+      context.replyError('用法: chest click <槽位> [left|right|shift|shift-right|drop|dropstack|collect|clone]');
+      return;
+    }
+
+    const slot = Number.parseInt(args[0], 10);
+    if (!Number.isInteger(slot)) {
+      context.replyError('槽位必须是整数(-999 表示窗口外)');
+      return;
+    }
+
+    const action = args[1] || 'left';
+    const result = this.clickSlot({ slot, action });
+    context.replyInfo(this.describeClickResult(result));
+  }
+
+  handleChestSwap(context, args) {
+    if (args.length < 2) {
+      context.replyError('用法: chest swap <槽位> <1-9|offhand>');
+      return;
+    }
+
+    const slot = Number.parseInt(args[0], 10);
+    if (!Number.isInteger(slot)) {
+      context.replyError('槽位必须是整数');
+      return;
+    }
+
+    const result = this.clickSlot({ slot, action: 'swap', swapSlot: args[1] });
+    context.replyInfo(this.describeClickResult(result));
+  }
+
+  handleChestDrag(context, args) {
+    if (args.length < 1) {
+      context.replyError('用法: chest drag <start|add|end> [槽位] [left|right|middle]');
+      return;
+    }
+
+    const phase = String(args[0]).toLowerCase();
+    let slot = OUTSIDE_SLOT;
+    let button = 'left';
+
+    if (phase === 'add') {
+      if (args.length < 2) {
+        context.replyError('用法: chest drag add <槽位> [left|right|middle]');
+        return;
+      }
+      const parsed = Number.parseInt(args[1], 10);
+      if (!Number.isInteger(parsed)) {
+        context.replyError('槽位必须是整数');
+        return;
+      }
+      slot = parsed;
+      button = args[2] || 'left';
+    } else {
+      button = args[1] || 'left';
+    }
+
+    const result = this.clickSlot({ slot, action: `drag-${phase}`, button });
+    context.replyInfo(this.describeClickResult(result));
+  }
+
+  describeClickResult(result) {
+    const parts = [
+      `已点击 槽位=${result.slot} 动作=${result.action || `${result.mode}/${result.mouseButton}`}`,
+      `窗口=${result.windowId}`,
+      `stateId=${result.stateId}`
+    ];
+    if (result.predicted) {
+      const changed = result.changedSlots.length > 0 ? result.changedSlots.join(',') : '无';
+      parts.push(`本地预测变更=[${changed}]`);
+      if (result.cursorChanged) parts.push('光标物品有变化');
+    } else {
+      parts.push('本次不做本地预测(等待服务器回包)');
+    }
+    return parts.join(' ');
   }
 
   replyChestInfo(context) {
@@ -296,8 +439,9 @@ class WindowFeature {
     }
 
     const occupied = snapshot.slots.filter((entry) => entry !== null);
+    const titleText = snapshot.title ? `, 标题=${snapshot.title}` : '';
     context.replyInfo(
-      `窗口: ${snapshot.name} (id=${snapshot.id}, 支持=${snapshot.supported}, 槽位 ${snapshot.inventoryStart}-${snapshot.inventoryEnd})`
+      `窗口: ${snapshot.name} (id=${snapshot.id}, 支持=${snapshot.supported}${titleText}, 槽位 ${snapshot.inventoryStart}-${snapshot.inventoryEnd})`
     );
     context.replyInfo(`物品: ${occupied.length} 格`);
 

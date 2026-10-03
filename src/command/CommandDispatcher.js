@@ -102,7 +102,7 @@ class CommandDispatcher {
       '  send <内容>',
       '  broadcast send <内容> | broadcast inv <子命令> | broadcast eat <物品id>',
       '  inv ...',
-      '  chest <info|move|close|help>',
+      '  chest <info|click|swap|drag|move|close|help>',
       '  changeslot <1-9|info>',
       '  look <yaw> <pitch>',
       withCapability('goto <x> <y> <z> [选项...]', { terrainHandling: true }),

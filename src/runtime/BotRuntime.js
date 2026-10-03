@@ -1931,6 +1931,15 @@ class BotRuntime {
     return this.windowFeature.closeWindow();
   }
 
+  // 原版语义点击(命令/HTTP 面板/脚本共用): 见 src/features/window/WindowClick.js
+  clickWindowSlot(options = {}) {
+    if (!this.windowFeature || typeof this.windowFeature.clickSlot !== 'function') {
+      throw new Error('窗口模块未初始化(轻量模式需要 inventoryHandling=true)');
+    }
+
+    return this.windowFeature.clickSlot(options);
+  }
+
   detachFeaturesFromBot() {
     const features = [
       this.scriptFeature,

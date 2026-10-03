@@ -888,9 +888,37 @@ ServerOwner
 轻量模式（`entityHandling=false` 且 `terrainHandling=false`）：
 
 - 不再加载处理区块/实体/物理的插件，避免跨版本挂机时的解析与内存开销
-- **仍然可用**：自身背包（`inv` 系列命令）、**服务器主动打开的窗口／自定义菜单**（面板可查看、`chest info|move|close`、面板"关闭窗口"），以及聊天、脚本调度等
+- **仍然可用**：自身背包（`inv` 系列命令）、**服务器主动打开的窗口／自定义菜单**（面板可查看、`chest info|click|swap|drag|move|close`、面板"关闭窗口"与点击接口），以及聊天、脚本调度等
 - **不可用**：走位（`goto` 等）、进食、对着方块开箱子、实体交互（这些需要地形或实体数据）
 - 服务器菜单的窗口标题会随快照一起返回；未识别的自定义菜单类型按容器槽位数展示
+
+### 4.5.1 窗口点击（原版语义）
+
+`chest` 命令与 `POST /api/bots/:id/window-click` 提供与游戏内鼠标操作一致的单次点击。
+槽位为窗口原始索引（`chest info` 可列出），`-999` 表示窗口外（丢弃光标上的物品）。
+
+| 操作 | 命令 | 原版对应 |
+| --- | --- | --- |
+| 左键 | `chest click <槽位>` | 拿起/放下整组 |
+| 右键 | `chest click <槽位> right` | 拿起一半/放下一个 |
+| Shift 点击 | `chest click <槽位> shift` | 快速移动 |
+| Shift+右键 | `chest click <槽位> shift-right` | 快速移动到快捷栏 |
+| 与快捷栏交换 | `chest swap <槽位> 1-9` | 数字键 |
+| 与副手交换 | `chest swap <槽位> offhand` | F 键 |
+| 丢一个 / 丢一组 | `chest click <槽位> drop｜dropstack` | Q / Ctrl+Q |
+| 双击收集 | `chest click <槽位> collect` | 双击同类物品 |
+| 创造模式复制 | `chest click <槽位> clone` | 中键 |
+| 拖拽分发 | `chest drag start｜add <槽位>｜end [left｜right｜middle]` | 按住鼠标划过多个槽位 |
+
+说明：
+
+- 点击遵循原版协议：`windowId` + 该窗口**最新 stateId** + `slot/mouseButton/mode`；本地预测复用 prismarine-windows
+  的 `acceptClick`（原版菜单逻辑移植）并据此上报 `changedSlots`
+- 副手交换（button 40）与拖拽起始不参与本地预测，直接按原版发包、等服务器回包纠正
+- **"点一下就触发动作"的菜单请用 `chest click`**：`chest move` 是交换式操作（会点两次甚至三次），
+  在菜单上可能重复触发动作
+- 面板接口：`POST /api/bots/:id/window-click`,body 为 `{ slot, action }`（action 同上表），
+  或原版三元组 `{ slot, button, mode }`；返回 `{ ok, click: { windowId, slot, mouseButton, mode, stateId, predicted, changedSlots } }`
 
 ### 4.6 `display`
 

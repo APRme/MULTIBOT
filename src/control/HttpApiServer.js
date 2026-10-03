@@ -448,6 +448,51 @@ class HttpApiServer {
       return;
     }
 
+    if (action === 'window-click') {
+      this.markRoute(accessContext, 'POST /api/bots/:id/window-click');
+      const runtime = this.botManager.getBot(botId);
+      if (!runtime) {
+        this.markOutcome(accessContext, 'bot_not_found');
+        this.json(res, 404, { error: 'bot not found' });
+        return;
+      }
+
+      const body = await this.readJsonBody(req, accessContext);
+
+      try {
+        if (typeof runtime.clickWindowSlot !== 'function') {
+          throw new Error('窗口模块未初始化');
+        }
+
+        const slot = body.slot === undefined || body.slot === null ? undefined : Number(body.slot);
+        if (slot !== undefined && !Number.isInteger(slot)) {
+          throw new Error('slot 必须是整数(-999 表示窗口外)');
+        }
+
+        // raw: { slot, button, mode } 直接按原版三元组; 否则用语义 action
+        const result = Number.isInteger(body.mode) && Number.isInteger(body.button)
+          ? runtime.windowFeature.clickSlotRaw({
+            slot: slot === undefined ? -999 : slot,
+            button: body.button,
+            mode: body.mode
+          })
+          : runtime.clickWindowSlot({
+            slot: slot === undefined ? -999 : slot,
+            action: body.action,
+            swapSlot: body.swapSlot,
+            button: body.button,
+            dragPhase: body.dragPhase
+          });
+
+        this.markOutcome(accessContext, 'success');
+        this.json(res, 200, { ok: true, click: result });
+      } catch (error) {
+        this.markOutcome(accessContext, 'invalid_request');
+        this.json(res, 400, { ok: false, error: error.message });
+      }
+      return;
+    }
+
     if (action === 'start') {
       this.markRoute(accessContext, 'POST /api/bots/:id/start');
       const bot = await this.botManager.startBot(botId);
