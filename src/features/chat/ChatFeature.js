@@ -51,6 +51,29 @@ function removeMinecraftFormatting(text) {
     .replace(/#([0-9a-fA-F]{6})/g, '');
 }
 
+// 部分服务端(TrChat 一类)把"模板本身"当作 translate 键发来, 例如 '<%s> %s'。
+// 这类值没有可读的键名(不含命名空间点号), 渲染后若再把键缀在末尾, 只会得到 '[<%s> %s]' 这种噪音。
+function looksLikeTranslateTemplate(value) {
+  return typeof value === 'string' && value.includes('%s') && !value.includes('.');
+}
+
+// 取行首的玩家名(私聊行与玩家聊天行都以玩家名开头)。
+// 兼容两种形态: '<name> msg'(原版模板渲染后带尖括号) 与 'name msg' / 'name whispers to you: ...'。
+// 返回名字在行内的区间, 便于只替换名字本身、保留外层尖括号与其余文本。
+function matchLeadingSenderName(plainText) {
+  const match = String(plainText || '').match(/^(?:<)?([A-Za-z0-9_]{1,16})(?=\s|>|$)/);
+  if (!match) {
+    return null;
+  }
+
+  const name = match[1];
+  return {
+    name,
+    start: match[0].length - name.length,
+    end: match[0].length
+  };
+}
+
 function renderChatExtra(extra) {
   if (!Array.isArray(extra)) return '';
   return extra.map(renderChatMessage).join('');
@@ -175,6 +198,9 @@ function renderTranslateMessage(message) {
     template = '%s 获得了 %s';
   } else if (message.translate && message.translate.startsWith('chat.type.achievement')) {
     template = '%s 获得了成就 %s';
+  } else if (looksLikeTranslateTemplate(message.translate)) {
+    // 模板当键: 保留模板本身用于填充参数, 但不把键缀在末尾
+    appendTranslateKey = false;
   }
 
   if (Array.isArray(message.with)) {
@@ -283,6 +309,44 @@ class ChatFeature {
     return this.trustedPlayers.some((player) => String(player).toLowerCase() === name);
   }
 
+  // 服务端常用 scoreboard team 的 prefix/suffix 给玩家名加"称号/组织"前缀:
+  // 这些前缀不在聊天包里(聊天包的发送者只有纯名), 而是客户端本地用 team 数据贴上去的,
+  // 所以游戏里看得到、我们的日志里却没有。mineflayer 的 team 插件已经维护了
+  // bot.teamMap(按玩家名 -> Team) 与 Team.displayName()(prefix + 名字 + suffix)。
+  // 注意: 这里的结果只用于"显示/日志", 解析仍旧使用未装饰的原始文本 ——
+  // 否则带前缀的名字会破坏私聊信任校验与传送提示的正则匹配。
+  decorateSenderWithTeam(plainText) {
+    const bot = this.bot;
+    const teamMap = bot && bot.teamMap;
+    if (!teamMap || typeof plainText !== 'string' || !plainText) {
+      return plainText;
+    }
+
+    const sender = matchLeadingSenderName(plainText);
+    if (!sender) {
+      return plainText;
+    }
+
+    const team = teamMap[sender.name];
+    if (!team || typeof team.displayName !== 'function') {
+      return plainText;
+    }
+
+    let decorated = '';
+    try {
+      decorated = renderChatMessage(team.displayName(sender.name));
+    } catch (error) {
+      return plainText;
+    }
+
+    // 装饰失败、或装饰结果与纯名相同(该队没有前缀/后缀)时不改动
+    if (!decorated || decorated === sender.name) {
+      return plainText;
+    }
+
+    return `${plainText.slice(0, sender.start)}${decorated}${plainText.slice(sender.end)}`;
+  }
+
   logChatMessage(plainText) {
     if (!this.logger) return;
 
@@ -304,10 +368,12 @@ class ChatFeature {
     const plainText = parseChatMessage(message);
     if (!plainText) return;
 
-    this.logChatMessage(plainText);
+    // 日志/活动日志用带 team 装饰的文本(与游戏内显示一致); 解析继续用纯名文本
+    const displayText = this.decorateSenderWithTeam(plainText);
+    this.logChatMessage(displayText);
 
     if (this.activityLogFeature) {
-      this.activityLogFeature.logChatMessage(plainText);
+      this.activityLogFeature.logChatMessage(displayText);
     }
 
     const whisperMatch = plainText.match(/^(.+?) whispers to you:\s*(.*)$/);

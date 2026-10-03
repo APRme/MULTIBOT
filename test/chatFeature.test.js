@@ -70,6 +70,149 @@ test('parseChatMessage renders numeric with arguments in generic translate paths
   assert.equal(parsed, 'example_player加入了游戏');
 });
 
+test('parseChatMessage does not append template-style translate keys', () => {
+  // 服务端(TrChat 一类)把模板本身当键发来: 渲染出 '<playerName> 1' 即可,
+  // 不应再缀上 '[<%s> %s]'
+  const parsed = parseChatMessage({
+    translate: '<%s> %s',
+    with: ['playerName', { text: '1' }]
+  });
+
+  assert.equal(parsed, '<playerName> 1');
+});
+
+test('parseChatMessage still appends real translate keys', () => {
+  // 回归: 命名键(含命名空间点号)保持既有行为 —— 仍然缀出键名
+  const parsed = parseChatMessage({
+    translate: 'death.attack.generic',
+    with: [{ text: 'playerName' }]
+  });
+
+  assert.equal(parsed, 'playerName 死了 [death.attack.generic]');
+});
+
+function createChatFeatureForDisplay(options = {}) {
+  const logs = [];
+  const activityLogs = [];
+  const feature = new ChatFeature({
+    runtime: {
+      createCommandContext(contextOptions) {
+        return { options: contextOptions };
+      },
+      async executeCommand() {}
+    },
+    logger: { info: (line) => logs.push(line) },
+    teleportFeature: {
+      handleTeleportRequest() {},
+      handleTeleportHereRequest() {}
+    },
+    trustedPlayers: options.trustedPlayers || [],
+    activityLogFeature: {
+      logChatMessage: (line) => activityLogs.push(line)
+    }
+  });
+  if (options.bot) {
+    feature.bot = options.bot;
+  }
+  return { feature, logs, activityLogs };
+}
+
+function fakeTeam(prefix) {
+  return {
+    displayName(member) {
+      return { text: `${prefix}${member}` };
+    }
+  };
+}
+
+test('ChatFeature decorates the sender with its scoreboard team prefix', async () => {
+  const { feature, logs, activityLogs } = createChatFeatureForDisplay({
+    bot: { teamMap: { playerName: fakeTeam('「称号」[组织]') } }
+  });
+
+  await feature.handleMessage({
+    translate: '<%s> %s',
+    with: ['playerName', { text: '1' }]
+  });
+
+  // 只替换名字本身: 外层尖括号来自模板, 保留
+  assert.deepEqual(logs, ['[CHAT] <「称号」[组织]playerName> 1']);
+  assert.deepEqual(activityLogs, ['<「称号」[组织]playerName> 1']);
+});
+
+test('ChatFeature keeps the line unchanged when the sender has no team', async () => {
+  const { feature, logs } = createChatFeatureForDisplay({
+    bot: { teamMap: { someoneElse: fakeTeam('[X]') } }
+  });
+
+  await feature.handleMessage({
+    translate: '<%s> %s',
+    with: ['playerName', { text: '1' }]
+  });
+
+  assert.deepEqual(logs, ['[CHAT] <playerName> 1']);
+});
+
+test('ChatFeature does not decorate twice when prefixes already came in the packet', async () => {
+  const { feature, logs } = createChatFeatureForDisplay({
+    bot: { teamMap: { playerName: fakeTeam('「称号」[组织]') } }
+  });
+
+  // 行首已经是装饰后的名字(不是纯名) => 视为服务端已带前缀, 不再重复套用
+  await feature.handleMessage({
+    translate: '<%s> %s',
+    with: ['「称号」[组织]playerName', { text: '1' }]
+  });
+
+  assert.deepEqual(logs, ['[CHAT] <「称号」[组织]playerName> 1']);
+});
+
+test('ChatFeature tolerates a missing team map in lightweight mode', async () => {
+  const { feature, logs } = createChatFeatureForDisplay({ bot: {} });
+
+  await feature.handleMessage({
+    translate: '<%s> %s',
+    with: ['playerName', { text: '1' }]
+  });
+
+  assert.deepEqual(logs, ['[CHAT] <playerName> 1']);
+});
+
+test('ChatFeature decorates the log but parses the raw whisper sender', async () => {
+  const commands = [];
+  const contexts = [];
+  const logs = [];
+  const feature = new ChatFeature({
+    runtime: {
+      createCommandContext(contextOptions) {
+        contexts.push(contextOptions);
+        return { options: contextOptions };
+      },
+      async executeCommand(content) {
+        commands.push(content);
+      }
+    },
+    logger: { info: (line) => logs.push(line) },
+    teleportFeature: {
+      handleTeleportRequest() {},
+      handleTeleportHereRequest() {}
+    },
+    trustedPlayers: ['example_player'],
+    activityLogFeature: {
+      logChatMessage() {}
+    }
+  });
+  feature.bot = { teamMap: { example_player: fakeTeam('[会长]') } };
+
+  await feature.handleMessage('example_player whispers to you: health');
+
+  // 信任校验与命令提取必须基于纯名, 否则带前缀的名字会匹配失败
+  assert.deepEqual(contexts, [{ source: 'whisper', sender: 'example_player' }]);
+  assert.deepEqual(commands, ['health']);
+  // 只有日志被装饰
+  assert.deepEqual(logs, ['[CHAT] [会长]example_player whispers to you: health']);
+});
+
 test('ChatFeature forwards trusted whisper commands only', async () => {
   const commands = [];
   const contexts = [];

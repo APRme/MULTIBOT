@@ -909,11 +909,12 @@ class BotRuntime {
     };
 
     if (this.isLightweightMode()) {
-      // 只加载 chat/game/health/settings/resource_pack 插件：不处理区块/实体/物理（MCC 式轻量挂机）
+      // 只加载 chat/game/health/settings/resource_pack/team 插件：不处理区块/实体/物理（MCC 式轻量挂机）
       // health: 血量/饱食度（update_health）；settings: client_information；
-      // resource_pack: 服务器配置资源包时需回应 add_resource_pack，否则卡在 configuration 阶段
+      // resource_pack: 服务器配置资源包时需回应 add_resource_pack，否则卡在 configuration 阶段；
+      // team: 记分板队伍（teams/scoreboard_team 小包，不涉及区块/实体），用于还原聊天里的"称号/组织"前缀
       options.loadInternalPlugins = false;
-      options.plugins = { chat: true, game: true, health: true, settings: true, resource_pack: true };
+      options.plugins = { chat: true, game: true, health: true, settings: true, resource_pack: true, team: true };
     }
 
     if (this.isOpenAuthEnabled()) {
