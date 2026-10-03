@@ -92,6 +92,11 @@ function createClickableWindow(options = {}) {
   return chest;
 }
 
+// 点击前必须先收到容器内容(stateId), 否则按原版语义会被拒绝
+function syncWindowState(bot, windowId, stateId) {
+  bot._client.emit('window_items', { windowId, items: [], stateId });
+}
+
 // 模拟 Minecraft 点击语义（对应 prismarine-windows acceptClick）：
 // 左键: 光标空=拿整组/光标有物=放下或合并或交换；右键: 光标空=拿半组(ceil)/光标有物=放1个。
 function installClickSimulator(bot) {
@@ -545,6 +550,7 @@ test('chest click sends a single vanilla click for the requested slot', () => {
   const { feature, bot, writes } = createFeature();
   bot.currentWindow = createClickableWindow({ id: 3 });
   feature.attach(bot);
+  syncWindowState(bot, 3, 7);
   const { context, infos, errors } = createClickContext();
 
   feature.handleChestCommand(context, 'chest click 13');
@@ -555,7 +561,17 @@ test('chest click sends a single vanilla click for the requested slot', () => {
   assert.equal(packet.payload.slot, 13);
   assert.equal(packet.payload.mouseButton, 0);
   assert.equal(packet.payload.mode, 0);
-  assert.equal(packet.payload.stateId, -1, '还没收到 stateId 时为 -1');
+  assert.equal(packet.payload.stateId, 7, '使用该窗口最新 stateId');
+  assert.deepEqual(packet.payload.changedSlots, [], '不传输本地预测(1.21.11 HashedStack 语义)');
+  // 还没收到 stateId 时必须拒绝点击, 而不是发一个 stateId=-1 的包
+  const fresh = createFeature();
+  fresh.bot.currentWindow = createClickableWindow({ id: 4 });
+  fresh.feature.attach(fresh.bot);
+  const freshCtx = createClickContext();
+  fresh.feature.handleChestCommand(freshCtx.context, 'chest click 1');
+  assert.ok(freshCtx.errors.some((line) => line.includes('尚未同步')));
+  assert.equal(fresh.writes.filter((w) => w.name === 'window_click').length, 0);
+
   assert.deepEqual(errors, []);
   assert.ok(infos.some((line) => line.includes('槽位=13')));
 });
@@ -564,6 +580,7 @@ test('chest click honours vanilla action modifiers', () => {
   const { feature, bot, writes } = createFeature();
   bot.currentWindow = createClickableWindow({ id: 3 });
   feature.attach(bot);
+  syncWindowState(bot, 3, 5);
   const { context } = createClickContext();
 
   const expectations = [
@@ -583,18 +600,23 @@ test('chest click honours vanilla action modifiers', () => {
     assert.equal(packet.payload.mode, mode, `${command} 的模式`);
   }
 
-  // 窗口外点击(丢弃光标上的物品): slot=-999, 左键
+  // 空手点窗口外: 原版发 THROW(服务端无操作); 手持物品时才是 PICKUP(-999 丢弃)
   feature.handleChestCommand(context, 'chest click -999');
   const outside = writes.filter((w) => w.name === 'window_click').pop();
   assert.equal(outside.payload.slot, -999);
-  assert.equal(outside.payload.mouseButton, 0);
-  assert.equal(outside.payload.mode, 0);
+  assert.equal(outside.payload.mode, 4, '空手点窗口外 = THROW');
+
+  bot.currentWindow.selectedItem = { type: 1, count: 1, metadata: 0, name: 'stone' };
+  feature.handleChestCommand(context, 'chest click -999 left');
+  const holding = writes.filter((w) => w.name === 'window_click').pop();
+  assert.equal(holding.payload.mode, 0, '手持物品点窗口外 = PICKUP');
 });
 
 test('chest swap uses hotbar or offhand buttons', () => {
   const { feature, bot, writes } = createFeature();
   bot.currentWindow = createClickableWindow({ id: 3 });
   feature.attach(bot);
+  syncWindowState(bot, 3, 2);
   const { context, infos, errors } = createClickContext();
 
   feature.handleChestCommand(context, 'chest swap 4 3');
@@ -617,6 +639,7 @@ test('chest drag sends vanilla start/add/end packets', () => {
   const { feature, bot, writes } = createFeature();
   bot.currentWindow = createClickableWindow({ id: 3 });
   feature.attach(bot);
+  syncWindowState(bot, 3, 11);
   const { context, errors } = createClickContext();
 
   feature.handleChestCommand(context, 'chest drag start left');
@@ -635,6 +658,7 @@ test('chest click reports invalid actions and slots', () => {
   const { feature, bot } = createFeature();
   bot.currentWindow = createClickableWindow({ id: 3 });
   feature.attach(bot);
+  syncWindowState(bot, 3, 4);
   const { context, errors } = createClickContext();
 
   feature.handleChestCommand(context, 'chest click');
@@ -665,4 +689,22 @@ test('chest help documents click/swap/drag', () => {
   assert.ok(infos.some((line) => line.includes('chest click <槽位>')));
   assert.ok(infos.some((line) => line.includes('chest drag')));
   assert.ok(infos.some((line) => line.includes('-999')));
+});
+
+test('window cursor change republishes the full snapshot', () => {
+  const { feature, bot, events } = createFeature();
+  const chest = createClickableWindow({ id: 3 });
+  chest.selectedItem = createItem(0, 'diamond', 2, { displayName: '钻石' });
+  bot.currentWindow = chest;
+  feature.attach(bot);
+
+  events.length = 0;
+  bot.emit('windowCursorChanged', chest, chest.selectedItem);
+
+  const published = events.filter((entry) => entry.event === 'inventory').pop();
+  assert.ok(published, 'cursor 变化触发一次窗口发布');
+  assert.equal(published.data.type, 'window');
+  assert.equal(published.data.window.id, 3);
+  assert.equal(published.data.window.cursor.name, 'minecraft:diamond');
+  assert.equal(published.data.window.cursor.count, 2);
 });

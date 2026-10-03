@@ -220,13 +220,113 @@ test('click validates slot range and mode/button combinations', () => {
   try {
     const window = windowsLib.createWindow(1, 'minecraft:generic_9x3', 'Menu');
     bot.currentWindow = window;
+    bot._client.emit('window_items', { windowId: 1, items: [], stateId: 7 });
 
     assert.throws(() => clicker.click({ slot: 999, mouseButton: 0, mode: 0 }), /槽位越界/);
     assert.throws(() => clicker.click({ slot: 0, mouseButton: 5, mode: 0 }), /原版不存在的点击组合/);
     assert.throws(() => clicker.click({ slot: 0, mouseButton: 1, mode: 3 }), /原版不存在的点击组合/);
-    // -999(窗口外)合法
+    // -999(窗口外)合法: 空手时按原版发 THROW
     const outside = clicker.click({ slot: OUTSIDE_SLOT, mouseButton: 0, mode: 0 });
     assert.equal(outside.slot, OUTSIDE_SLOT);
+    assert.equal(outside.mode, CLICK_MODES.THROW, '空手点窗口外 = 原版 THROW');
+  } finally {
+    dispose();
+  }
+});
+
+test('click refuses to fire before the container content (stateId) arrives', () => {
+  const { bot, clicker, windowsLib, dispose } = createHarness();
+  try {
+    const window = windowsLib.createWindow(4, 'minecraft:generic_9x3', 'Menu');
+    bot.currentWindow = window;
+
+    // 仅收到 open_window、还没收到内容: stateId 未知
+    assert.throws(() => clicker.clickAction('left', { slot: 0 }), /尚未同步/);
+
+    bot._client.emit('window_items', { windowId: 4, items: [], stateId: 21 });
+    const result = clicker.clickAction('left', { slot: 0 });
+    assert.equal(result.stateId, 21);
+  } finally {
+    dispose();
+  }
+});
+
+test('click does not transmit a local prediction (changedSlots empty, no cursorItem)', () => {
+  const { bot, writes, clicker, windowsLib, dispose } = createHarness();
+  try {
+    const Item = ItemLib(bot.registry);
+    const registry = bot.registry;
+    const window = windowsLib.createWindow(8, 'minecraft:generic_9x3', 'Menu');
+    window.updateSlot(2, new Item(registry.itemsByName.diamond.id, 5));
+    bot.currentWindow = window;
+    bot._client.emit('window_items', { windowId: 8, items: [], stateId: 3 });
+
+    const result = clicker.clickAction('left', { slot: 2 });
+    const packet = writes.filter((w) => w.name === 'window_click').pop();
+
+    // 本地仍做预测(供 UI 立即反馈), 但不上线: 服务器会回发真实槽位
+    assert.equal(result.predicted, true);
+    assert.deepEqual(result.changedSlots, [2]);
+    assert.deepEqual(packet.payload.changedSlots, []);
+    assert.equal(packet.payload.cursorItem, undefined);
+  } finally {
+    dispose();
+  }
+});
+
+test('set_cursor_item updates the window cursor item', () => {
+  const { bot, clicker, windowsLib, dispose } = createHarness();
+  try {
+    const Item = ItemLib(bot.registry);
+    const registry = bot.registry;
+    const window = windowsLib.createWindow(3, 'minecraft:generic_9x3', 'Menu');
+    bot.currentWindow = window;
+
+    const events = [];
+    bot.on('windowCursorChanged', (target, item) => events.push(item ? item.name : null));
+
+    bot._client.emit('set_cursor_item', {
+      contents: Item.toNotch(new Item(registry.itemsByName.diamond.id, 4))
+    });
+
+    assert.ok(window.selectedItem, 'cursor item applied');
+    assert.equal(window.selectedItem.count, 4);
+    assert.equal(events.length, 1);
+
+    // 空光标(EMPTY)
+    bot._client.emit('set_cursor_item', { contents: { itemCount: 0, components: [], removeComponents: [] } });
+    assert.equal(window.selectedItem, null);
+    assert.equal(events.length, 2);
+  } finally {
+    dispose();
+  }
+});
+
+test('drag session enforces order, dedupes repeated slots and blocks mismatched buttons', () => {
+  const { bot, writes, clicker, windowsLib, dispose } = createHarness();
+  try {
+    const window = windowsLib.createWindow(5, 'minecraft:generic_9x3', 'Menu');
+    bot.currentWindow = window;
+    bot._client.emit('window_items', { windowId: 5, items: [], stateId: 9 });
+
+    // 未 start 就 add
+    assert.throws(() => clicker.clickAction('drag-add', { slot: 1, button: 'left' }), /请先发送 drag start/);
+
+    clicker.clickAction('drag-start', { button: 'left' });
+    clicker.clickAction('drag-add', { slot: 1, button: 'left' });
+    // 同槽重复: 原版只算一次 => 跳过且不再发包
+    const before = writes.filter((w) => w.name === 'window_click').length;
+    const again = clicker.clickAction('drag-add', { slot: 1, button: 'left' });
+    assert.equal(again.skipped, true);
+    assert.equal(writes.filter((w) => w.name === 'window_click').length, before);
+
+    // 按钮与 start 不一致
+    assert.throws(() => clicker.clickAction('drag-add', { slot: 2, button: 'right' }), /拖拽按钮与 drag start 不一致/);
+    assert.throws(() => clicker.clickAction('drag-end', { button: 'right' }), /拖拽结束按钮与 drag start 不一致/);
+
+    const ended = clicker.clickAction('drag-end', { button: 'left' });
+    assert.equal(ended.skipped, false);
+    assert.equal(clicker.getActiveDrag(), null, '结束后会话清空');
   } finally {
     dispose();
   }

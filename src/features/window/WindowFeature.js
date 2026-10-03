@@ -80,6 +80,10 @@ class WindowFeature {
     this.on(bot, 'spawn', () => {
       this.handleSpawn();
     });
+    // 光标物品变化(服务器 set_cursor_item 或本地预测): 刷新整窗快照, 面板据此显示"手上拿着的物品"
+    this.on(bot, 'windowCursorChanged', () => {
+      this.publishFull(this.bot ? (this.bot.currentWindow || this.bot.inventory) : null);
+    });
     this.ensureInventoryListener();
   }
 

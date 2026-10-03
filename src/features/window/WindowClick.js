@@ -8,6 +8,16 @@
 //   - mineflayer 自身的 bot.clickWindow 只允许 mode 0..4 且不认副手交换(40)/拖拽起始(0/4/8),
 //     所以完整点击(拖拽分发、双击收集、副手交换)必须由本模块直接发包。
 //
+// 关于 changedSlots / cursorItem(1.21.11 实测结论):
+//   原版这两个字段是 HashedStack(组件经 CRC32C 哈希), 而 JS 栈里 Item.toNotch() 产出的是
+//   UntrustedSlot 形状(itemId/itemCount/components/removeComponents, 组件带 data 而非 hash)。
+//   实测: 组件为空时两者字段名恰好重合、可正确编码; 组件非空时能编码但组件类型与 hash(0)是错的,
+//   服务器会把它记成"远端预期", 一旦与服务端真实值恰好相同就会**跳过应有的回包纠正**。
+//   服务端从不校验这两个字段(只用于决定是否回发纠正), 因此这里选择**不传输本地预测**:
+//   changedSlots 发空、cursorItem 省略 —— 服务器因此总会回发真实槽位, 客户端状态只会更准。
+//   代价是每次点击多几个 set_slot / container_set_content 包, 换来的是绝不出现状态漂移。
+//   (若将来要实现真正的 HashedStack, 需要按组件做 CRC32C 哈希, 属独立课题)
+//
 // 模式(mode)与原版 ClickType 对应:
 //   0 PICKUP      左/右键 拿起-放下
 //   1 QUICK_MOVE  Shift 点击(快速移动)
@@ -214,6 +224,9 @@ function createWindowClicker(bot, hooks = {}) {
   const logger = hooks.logger || null;
   const Item = ItemLib(bot.registry);
   const stateIdByWindow = new Map();
+  // 拖拽会话: 原版在鼠标释放时才把 start/全部 add/end 一次性发出, 同槽只算一次;
+  // 这里改为按调用即时发包(便于面板逐步驱动), 因此自行做同槽去重与顺序校验。
+  let activeDrag = null;
 
   const trackStateId = (packet) => {
     if (packet && Number.isInteger(packet.stateId) && Number.isInteger(packet.windowId)) {
@@ -221,12 +234,33 @@ function createWindowClicker(bot, hooks = {}) {
     }
   };
 
+  // 光标物品同步: ClientboundSetCursorItemPacket(contents) 没有 containerId, 作用于当前打开的容器。
+  // mineflayer 至今没有处理这个包(1.21.11), 不补的话服务端改了光标物品后本地会一直是旧值。
+  const applyCursorItem = (packet) => {
+    const window = bot.currentWindow || bot.inventory;
+    if (!window) return;
+
+    const contents = packet && packet.contents !== undefined ? packet.contents : packet;
+    window.selectedItem = Item.fromNotch(contents);
+    bot.emit('windowCursorChanged', window, window.selectedItem);
+  };
+
   addListener(bot._client, 'window_items', trackStateId);
   addListener(bot._client, 'set_slot', trackStateId);
+  addListener(bot._client, 'set_cursor_item', applyCursorItem);
 
   const getStateId = (windowId) => (stateIdByWindow.has(windowId) ? stateIdByWindow.get(windowId) : -1);
 
   const resolveWindow = (window) => window || bot.currentWindow || bot.inventory;
+
+  const usesStateId = () => {
+    if (typeof bot.supportFeature !== 'function') return true;
+    try {
+      return bot.supportFeature('stateIdUsed') === true;
+    } catch (error) {
+      return true;
+    }
+  };
 
   function assertSlotValid(window, slot) {
     if (slot === OUTSIDE_SLOT) return;
@@ -281,29 +315,80 @@ function createWindowClicker(bot, hooks = {}) {
     }
 
     const slot = options.slot === undefined || options.slot === null ? OUTSIDE_SLOT : Number(options.slot);
-    const mouseButton = Number.isInteger(options.mouseButton) ? options.mouseButton : 0;
-    const mode = Number.isInteger(options.mode) ? options.mode : CLICK_MODES.PICKUP;
+    let mouseButton = Number.isInteger(options.mouseButton) ? options.mouseButton : 0;
+    let mode = Number.isInteger(options.mode) ? options.mode : CLICK_MODES.PICKUP;
+
+    // 原版语义: 空手点窗口外发 THROW(-999, 服务端无操作), 手持物品才是 PICKUP(-999 丢弃)
+    if (slot === OUTSIDE_SLOT && mode === CLICK_MODES.PICKUP && !window.selectedItem) {
+      mode = CLICK_MODES.THROW;
+    }
 
     if (!isValidModeButton(mode, mouseButton)) {
       throw new Error(`原版不存在的点击组合: mode=${mode} button=${mouseButton}`);
     }
     assertSlotValid(window, slot);
 
-    const prediction = predictLocal(window, { slot, mouseButton, mode });
     const stateId = getStateId(window.id);
+    if (usesStateId() && stateId < 0) {
+      throw new Error('窗口尚未同步(未收到 stateId)，请等服务器下发容器内容后再点击');
+    }
 
+    // 拖拽顺序与同槽去重(原版同槽只算一次)
+    if (mode === CLICK_MODES.QUICK_CRAFT) {
+      const isStart = [0, 4, 8].includes(mouseButton);
+      const isEnd = [2, 6, 10].includes(mouseButton);
+      if (isStart) {
+        activeDrag = { windowId: window.id, mouseButton, slots: new Set() };
+      } else if (!activeDrag || activeDrag.windowId !== window.id) {
+        throw new Error('拖拽未开始: 请先发送 drag start');
+      } else if (!isEnd) {
+        if (activeDrag.slots.has(slot)) {
+          return {
+            windowId: window.id,
+            slot,
+            mouseButton,
+            mode,
+            stateId,
+            action: options.action || null,
+            predicted: false,
+            skipped: true,
+            changedSlots: [],
+            cursorChanged: false
+          };
+        }
+        if (mouseButton !== activeDrag.mouseButton + 1) {
+          throw new Error('拖拽按钮与 drag start 不一致');
+        }
+        activeDrag.slots.add(slot);
+      } else {
+        if (mouseButton !== activeDrag.mouseButton + 2) {
+          throw new Error('拖拽结束按钮与 drag start 不一致');
+        }
+        activeDrag = null;
+      }
+    }
+
+    const prediction = predictLocal(window, { slot, mouseButton, mode });
+
+    // 刻意不传输 changedSlots / cursorItem(见文件头说明): 服务器因此总会回发真实槽位
     bot._client.write('window_click', {
       windowId: window.id,
       stateId,
       slot,
       mouseButton,
       mode,
-      changedSlots: prediction.changedSlots.map((index) => ({
-        location: index,
-        item: Item.toNotch(window.slots[index])
-      })),
-      cursorItem: Item.toNotch(window.selectedItem)
+      changedSlots: [],
+      cursorItem: undefined
     });
+
+    if (prediction.cursorChanged) {
+      bot.emit('windowCursorChanged', window, window.selectedItem);
+    }
+
+    if (logger && typeof logger.info === 'function' && mode !== CLICK_MODES.QUICK_CRAFT) {
+      // 保留一条简短轨迹便于排查菜单类点击(不打印物品内容)
+      logger.info(`[WINDOW] click window=${window.id} slot=${slot} button=${mouseButton} mode=${mode} stateId=${stateId} predicted=${prediction.predicted}`);
+    }
 
     return {
       windowId: window.id,
@@ -313,6 +398,7 @@ function createWindowClicker(bot, hooks = {}) {
       stateId,
       action: options.action || null,
       predicted: prediction.predicted,
+      skipped: false,
       changedSlots: prediction.changedSlots,
       cursorChanged: prediction.cursorChanged
     };
@@ -326,7 +412,8 @@ function createWindowClicker(bot, hooks = {}) {
   return {
     getStateId,
     click,
-    clickAction
+    clickAction,
+    getActiveDrag: () => (activeDrag ? { windowId: activeDrag.windowId, mouseButton: activeDrag.mouseButton, slots: [...activeDrag.slots] } : null)
   };
 }
 

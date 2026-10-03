@@ -912,13 +912,23 @@ ServerOwner
 
 说明：
 
-- 点击遵循原版协议：`windowId` + 该窗口**最新 stateId** + `slot/mouseButton/mode`；本地预测复用 prismarine-windows
-  的 `acceptClick`（原版菜单逻辑移植）并据此上报 `changedSlots`
-- 副手交换（button 40）与拖拽起始不参与本地预测，直接按原版发包、等服务器回包纠正
+- 点击遵循原版协议：`windowId` + 该窗口**最新 stateId**（1.17.1+）+ `slot/mouseButton/mode`
+- **本地预测只用于即时反馈，不随包上传**：1.21.11 的 `changedSlots`/`cursorItem` 是 `HashedStack`（组件需 CRC32C 哈希），
+  而 JS 栈里 `Item.toNotch()` 产出的是 `UntrustedSlot` 形状；组件非空时哈希必然错误。服务端只把它当"远端预期"、
+  **从不校验**，因此这里发空 `changedSlots` 并省略 `cursorItem`，服务器总会回发真实槽位（代价是每次点击多几个纠正包，
+  换来的是绝不出现状态漂移）
+- 窗口内容（stateId）到达前**拒绝点击**并提示"窗口尚未同步"，避免发 `stateId=-1` 的包触发全量重同步
+- 光标物品：处理服务器的 `set_cursor_item`（上游 mineflayer 至今未处理），随快照返回 `cursor` 字段
+- 窗口外点击（`-999`）：空手时按原版发 `THROW`（服务端无操作），手持物品时才是 `PICKUP`（丢弃光标物品）
+- 拖拽：强制 `start → add → end` 顺序并按槽位去重（原版同槽只算一次）；原版在鼠标释放时一次性发包，
+  此处按调用即时发包，服务端处理结果一致
+- 副手交换（button 40）与拖拽起始不做本地预测，直接按原版发包、等服务器回包纠正
 - **"点一下就触发动作"的菜单请用 `chest click`**：`chest move` 是交换式操作（会点两次甚至三次），
   在菜单上可能重复触发动作
 - 面板接口：`POST /api/bots/:id/window-click`,body 为 `{ slot, action }`（action 同上表），
-  或原版三元组 `{ slot, button, mode }`；返回 `{ ok, click: { windowId, slot, mouseButton, mode, stateId, predicted, changedSlots } }`
+  或原版三元组 `{ slot, button, mode }`；返回 `{ ok, click: { windowId, slot, mouseButton, mode, stateId, predicted, skipped, changedSlots } }`
+- 尚未支持：附魔台/织布机/讲台/切石机的**菜单按钮**（原版走 `container_button_click` 包，另一个包；
+  当前 minecraft-data 1.21.11 未定义该包，接入需要自定义包定义）
 
 ### 4.6 `display`
 

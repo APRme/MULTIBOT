@@ -107,6 +107,7 @@ test('buildWindowSnapshot builds supported window snapshot', () => {
     title: '商店',
     inventoryStart: 27,
     inventoryEnd: 54,
+    cursor: null,
     slots: [
       {
         slot: 1,

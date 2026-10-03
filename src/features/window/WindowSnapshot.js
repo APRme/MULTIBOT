@@ -122,6 +122,7 @@ function buildWindowSnapshot(window) {
     title: renderWindowTitle(window.title),
     inventoryStart,
     inventoryEnd: Number.isInteger(window.inventoryEnd) ? window.inventoryEnd : 0,
+    cursor: serializeItem(window.selectedItem || null),
     slots
   };
 }
