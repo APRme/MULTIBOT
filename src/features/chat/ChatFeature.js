@@ -84,6 +84,21 @@ function matchLeadingSenderName(plainText) {
   };
 }
 
+// 只有"玩家公屏聊天"这一类消息(<名字> 内容)才给发送者套 team 称号/组织前缀。
+// 其他消息(死亡、进退游戏、私聊、成就、TPA 提示、系统公告等)名字位置与格式各不相同,
+// 套前缀既不符合游戏内显示, 也会让日志更难读。
+function isPlayerChatMessage(message, plainText) {
+  const key = (message && typeof message.translate === 'string' && message.translate)
+    || (message && message.json && typeof message.json.translate === 'string' ? message.json.translate : '');
+
+  // 原版键, 以及"模板当键"的服务端(如 '<%s> %s')都代表玩家公屏聊天
+  if (key === 'chat.type.text') return true;
+  if (looksLikeTranslateTemplate(key) && key.trim().startsWith('<')) return true;
+
+  // 没有键信息时(部分服务端直接发系统消息文本): 只有行首确实是 <名字> 才算玩家聊天
+  return /^<[A-Za-z0-9_]{1,16}>/.test(String(plainText || ''));
+}
+
 function renderChatExtra(extra) {
   if (!Array.isArray(extra)) return '';
   return extra.map(renderChatMessage).join('');
@@ -380,8 +395,11 @@ class ChatFeature {
     const plainText = parseChatMessage(message);
     if (!plainText) return;
 
-    // 日志/活动日志用带 team 装饰的文本(与游戏内显示一致); 解析继续用纯名文本
-    const displayText = this.decorateSenderWithTeam(plainText);
+    // 日志/活动日志: 只有玩家公屏聊天才套 team 称号前缀(与游戏内显示一致);
+    // 解析一律继续用未装饰的原始文本, 否则带前缀的名字会破坏私聊信任校验与传送提示匹配。
+    const displayText = isPlayerChatMessage(message, plainText)
+      ? this.decorateSenderWithTeam(plainText)
+      : plainText;
     this.logChatMessage(displayText);
 
     if (this.activityLogFeature) {

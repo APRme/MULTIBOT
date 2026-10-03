@@ -206,15 +206,38 @@ test('ChatFeature keeps the player name when the team returns a ChatMessage inst
   assert.deepEqual(activityLogs, ['<「铃」playerName[铃音镇]> 我发的投影']);
 });
 
-test('ChatFeature decorates ChatMessage-style teams on non-template lines too', async () => {
+test('ChatFeature decorates player chat delivered as a ChatMessage instance', async () => {
+  const registry = require('prismarine-registry')('1.21.11');
+  const ChatMessage = require('prismarine-chat')(registry);
+  const { feature, logs, activityLogs } = createChatFeatureForDisplay({
+    bot: { teamMap: { Ling_x: chatMessageTeam('「铃」', '[铃音镇]') } }
+  });
+
+  // mineflayer 的 bot.on('message') 给的是 ChatMessage 实例, translate 键就是服务端的 '<%s> %s'
+  const message = new ChatMessage({
+    translate: '<%s> %s',
+    with: [{ text: 'Ling_x' }, { text: '我发的投影' }]
+  });
+
+  await feature.handleMessage(message);
+
+  assert.deepEqual(logs, ['[CHAT] <「铃」Ling_x[铃音镇]> 我发的投影']);
+  assert.deepEqual(activityLogs, ['<「铃」Ling_x[铃音镇]> 我发的投影']);
+});
+
+test('ChatFeature does not decorate non-chat messages (death/join/whisper)', async () => {
   const { feature, logs } = createChatFeatureForDisplay({
     bot: { teamMap: { playerName: chatMessageTeam('「缘」') } }
   });
 
-  // 死亡/系统行没有尖括号: 名字在行首, 同样不能丢
+  // 死亡消息虽然行首也是玩家名, 但不属于公屏聊天 => 不套称号前缀
   await feature.handleMessage({ translate: 'death.attack.outOfWorld', with: ['playerName'] });
+  await feature.handleMessage({ translate: 'multiplayer.player.joined', with: ['playerName'] });
 
-  assert.deepEqual(logs, ['[CHAT] 「缘」playerName 死了 [death.attack.outOfWorld]']);
+  assert.deepEqual(logs, [
+    '[CHAT] playerName 死了 [death.attack.outOfWorld]',
+    '[CHAT] playerName加入了游戏'
+  ]);
 });
 
 test('ChatFeature decorates the sender with its scoreboard team prefix', async () => {
@@ -270,7 +293,7 @@ test('ChatFeature tolerates a missing team map in lightweight mode', async () =>
   assert.deepEqual(logs, ['[CHAT] <playerName> 1']);
 });
 
-test('ChatFeature decorates the log but parses the raw whisper sender', async () => {
+test('ChatFeature parses the raw whisper sender and leaves the log undecorated', async () => {
   const commands = [];
   const contexts = [];
   const logs = [];
@@ -301,8 +324,8 @@ test('ChatFeature decorates the log but parses the raw whisper sender', async ()
   // 信任校验与命令提取必须基于纯名, 否则带前缀的名字会匹配失败
   assert.deepEqual(contexts, [{ source: 'whisper', sender: 'example_player' }]);
   assert.deepEqual(commands, ['health']);
-  // 只有日志被装饰
-  assert.deepEqual(logs, ['[CHAT] [会长]example_player whispers to you: health']);
+  // 私聊不属于公屏聊天 => 日志也不套称号前缀
+  assert.deepEqual(logs, ['[CHAT] example_player whispers to you: health']);
 });
 
 test('ChatFeature forwards trusted whisper commands only', async () => {
