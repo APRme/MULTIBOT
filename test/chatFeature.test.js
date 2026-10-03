@@ -81,6 +81,26 @@ test('parseChatMessage does not append template-style translate keys', () => {
   assert.equal(parsed, '<playerName> 1');
 });
 
+test('parseChatMessage renders the vanilla chat.type.text key as player chat', () => {
+  // 原版命名键: 渲染成 '<名字> 内容', 而不是把键名当正文再缀一次键名
+  const parsed = parseChatMessage({
+    translate: 'chat.type.text',
+    with: ['playerName', { text: '1' }]
+  });
+
+  assert.equal(parsed, '<playerName> 1');
+});
+
+test('parseChatMessage keeps appending keys that have no template mapping', () => {
+  // 回归: 未映射的命名键(如成就)保持既有行为 —— 仍然缀出键名(本次未改动)
+  const parsed = parseChatMessage({
+    translate: 'chat.type.advancement.task',
+    with: ['playerName', { text: 'Getting an Upgrade' }]
+  });
+
+  assert.equal(parsed, 'playerName 获得了 Getting an Upgrade [chat.type.advancement.task]');
+});
+
 test('parseChatMessage still appends real translate keys', () => {
   // 回归: 命名键(含命名空间点号)保持既有行为 —— 仍然缀出键名
   const parsed = parseChatMessage({

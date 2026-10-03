@@ -182,6 +182,11 @@ function renderTranslateMessage(message) {
   if (message.translate === '%s whispers to you: %s') {
     template = '%s whispers to you: %s';
     appendTranslateKey = false;
+  } else if (message.translate === 'chat.type.text') {
+    // 原版玩家聊天的命名键: 不映射的话会渲染成 'chat.type.text [chat.type.text]'(键名当正文)。
+    // 多数服务端直接发模板 '<%s> %s'(已由 looksLikeTranslateTemplate 处理), 但发原版键的也要正确显示。
+    template = '<%s> %s';
+    appendTranslateKey = false;
   } else if (message.translate === 'multiplayer.player.joined') {
     template = '%s加入了游戏';
     appendTranslateKey = false;
