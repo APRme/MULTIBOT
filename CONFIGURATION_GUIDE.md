@@ -889,8 +889,8 @@ ServerOwner
 轻量模式（`entityHandling=false` 且 `terrainHandling=false`）：
 
 - 不再加载处理区块/实体/物理的插件，避免跨版本挂机时的解析与内存开销
-- **仍然可用**：自身背包（`inv` 系列命令）、**服务器主动打开的窗口／自定义菜单**（面板可查看、`chest info|click|swap|drag|move|close`、面板"关闭窗口"与点击接口），以及聊天、脚本调度等
-- **不可用**：走位（`goto` 等）、进食、对着方块开箱子、实体交互（这些需要地形或实体数据）
+- **仍然可用**：自身背包（`inv` 系列命令）、**服务器主动打开的窗口／自定义菜单**（面板可查看、`chest info|click|swap|drag|move|close`、面板"关闭窗口"与点击接口）、**进食与自动进食**（`eat <物品id>`、`autoeat on|off|status`，见 4.9；需要 `capabilities.inventoryHandling !== false`），以及聊天、脚本调度等
+- **不可用**：走位（`goto` 等）、对着方块开箱子、实体交互（这些需要地形或实体数据）
 - 服务器菜单的窗口标题会随快照一起返回；未识别的自定义菜单类型按容器槽位数展示
 
 ### 4.5.1 窗口点击（原版语义）
@@ -1109,7 +1109,37 @@ ServerOwner
 - 也可以写实体 `name` / `displayName` / `type`
 - 比较时统一转小写
 
-### 4.9 `blockBreakDetection`
+### 4.9 `autoEat`
+
+自动进食：饱食度不足时自动吃背包里的食物。**轻量模式同样可用**（不依赖实体/地形，但要求 `capabilities.inventoryHandling !== false`）。
+
+| 字段 | 类型 | 代码默认 | 说明 |
+| --- | --- | --- | --- |
+| `autoEat.enabled` | boolean | `false` | 是否启用自动进食 |
+| `autoEat.threshold` | integer | `19` | 饱食度 **≤** 该值时进食，范围 0–20 |
+| `autoEat.items` | string[] | `[]` | 按此顺序优先尝试；支持 `minecraft:` 前缀（会归一化）；留空表示"按食物点数/饱和度自动择优" |
+| `autoEat.cooldownMs` | integer | `3000` | 成功进食后的冷却，毫秒（0–600000） |
+| `autoEat.failureBackoffMs` | integer | `30000` | 连续失败达上限后的暂停时长，毫秒（0–3600000） |
+| `autoEat.maxFailures` | integer | `3` | 连续失败多少次后进入退避（1–100） |
+
+写法与行为：
+
+- 可以只写 `"autoEat": true`（用全部默认值开启），或 `"autoEat": false` / 不写（关闭）
+- 配置层级遵循 1.4 的优先级：**代码内建默认 → `default.config.json` → `config.json`**（不读取 `server.json` 与 `multibot.config.json`）
+- `items` 里**显式写出**的物品即使不在食物表里也会被尝试（例如 `ominous_bottle` 不详之瓶）；这类物品不会出现在"自动择优"的候选里
+- 冲突时**跳过本次**、不打断操作：容器界面开着、正在使用手持物品、钓鱼中、攻击或挖掘进行中；会在冷却后自动重试
+- 进食完成后，临时换到主手的物品会**还原回原槽位**
+
+命令：
+
+| 命令 | 说明 |
+| --- | --- |
+| `eat <物品id>` | 手动吃一次（两种模式都可用）；满饱食度吃普通食物会被**立即拒绝**，白名单物品（如不详之瓶）不受限制 |
+| `autoeat on\|off\|status` | 运行时开关与查看，不需要重启 |
+
+状态：`getActionState()` 会带 `autoEatEnabled` / `autoEating`，面板可读。
+
+### 4.10 `blockBreakDetection`
 
 | 字段 | 类型 | 代码默认 | 说明 |
 | --- | --- | --- | --- |
@@ -1126,7 +1156,7 @@ ServerOwner
 - `monitoredBlocks` 里写的是 `block.name`
 - 空数组表示“所有匹配事件都监控”
 
-### 4.10 `monitoring`
+### 4.11 `monitoring`
 
 | 字段 | 类型 | 代码默认 | 说明 |
 | --- | --- | --- | --- |
@@ -1140,7 +1170,7 @@ ServerOwner
 - 如果 `targetTypes` 为空，则默认只监控 `mob`
 - 结果会去重并记录到 bot 目录下固定的 `found.txt`
 
-### 4.11 `recording`
+### 4.12 `recording`
 
 这是当前字段最多的一块。
 
@@ -1219,7 +1249,7 @@ ServerOwner
 
 `RecorderFeature` 是本地可选模块的适配层。没有本地模块时，录制相关命令仍可查询状态或安全结束空实现，其余 Bot 功能保持可用。
 
-### 4.12 能力开关与录制器联动
+### 4.13 能力开关与录制器联动
 
 如果：
 

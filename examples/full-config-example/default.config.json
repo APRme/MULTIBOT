@@ -39,6 +39,17 @@
     "unknownWhisperReply": ""
   },
   "fish": false,
+  "autoEat": {
+    "enabled": false,
+    "threshold": 19,
+    "items": [
+      "cooked_beef",
+      "bread"
+    ],
+    "cooldownMs": 3000,
+    "failureBackoffMs": 30000,
+    "maxFailures": 3
+  },
   "ScriptScheduler": {
     "Enabled": true,
     "TaskList": [
