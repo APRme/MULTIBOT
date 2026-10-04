@@ -1588,10 +1588,11 @@ class BotRuntime {
     }
   }
 
-  // 轻量模式的特性装配: 零实体/零地形依赖的部分(自身背包 + 服务器主动打开的窗口)。
+  // 轻量模式的特性装配: 零实体/零地形依赖的部分(自身背包 + 服务器主动打开的窗口 + 进食)。
   // 服务器的菜单/箱子经 open_window 下发, 只需要窗口相关的几个小包, 因此轻量模式也能
   // 与普通模式一样查看/点击/关闭(面板展示、chest 命令、close-window 接口全部复用 WindowFeature)。
-  // 仍不支持的: 走位(movement)、进食(eat)、对着方块开箱子/实体交互(需要地形与实体数据)。
+  // 进食走自建 use_item + 轻量背包核心的窗口点击, 因此轻量模式同样可用(需 inventoryHandling)。
+  // 仍不支持的: 走位(movement)、对着方块开箱子/实体交互(需要地形与实体数据)。
   attachLightweightFeatures(bot) {
     if (!this.isInventoryHandlingEnabled()) {
       this.logCapabilitySkip('inventory/window/movement/eat', 'because lightweight mode (no entity/terrain)');
@@ -1601,6 +1602,8 @@ class BotRuntime {
     this.attachLightInventoryCore(bot);
     this.inventoryFeature.attach(bot);
     this.windowFeature.attach(bot);
+    // 轻量模式同样要 attach 进食特性(否则 eat/autoeat 会报 "eat feature not attached")
+    this.eatFeature.attach(bot);
     // 轻量模式也支持进食与自动进食(靠轻量背包核心的窗口点击 + 自建 use_item)
     this.autoEatController.attach(bot);
     this.logCapabilitySkip('movement/block-container', 'because lightweight mode (no entity/terrain)');

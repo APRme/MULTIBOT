@@ -1587,6 +1587,37 @@ test('BotRuntime attachUnsignedChatWindowGuard skips versions without the ack wi
   assert.equal(writes[0].params.offset, 3, '不介入旧协议');
 });
 
+test('BotRuntime attaches eat feature in lightweight mode', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+
+  const client = new EventEmitter();
+  client.write = () => {};
+  const bot = new EventEmitter();
+  bot._client = client;
+  bot.version = '1.21.11';
+
+  // 只验证"接线": 轻量背包核心/窗口/背包特性会起定时器与装包, 这里换成空实现,
+  // 避免测试进程被它们的定时器挂住(这正是本次回归要覆盖的"eatFeature 漏挂"点)
+  const attached = [];
+  runtime.attachLightInventoryCore = () => {};
+  runtime.inventoryFeature.attach = () => attached.push('inventory');
+  runtime.windowFeature.attach = () => attached.push('window');
+
+  runtime.attachLightweightFeatures(bot);
+
+  assert.equal(runtime.isLightweightMode(), true);
+  assert.equal(runtime.eatFeature.bot, bot, '轻量模式必须 attach eatFeature, 否则 eat/autoeat 会报 eat feature not attached');
+  assert.equal(runtime.autoEatController.bot, bot, '轻量模式必须 attach autoEatController');
+  assert.deepEqual(attached, ['inventory', 'window']);
+
+  runtime.eatFeature.detach();
+  runtime.autoEatController.detach();
+});
+
 test('BotRuntime desync watchdog reconnects when nothing arrives after an ignored parse error', async () => {
   const runtime = createRuntime({
     config: {
