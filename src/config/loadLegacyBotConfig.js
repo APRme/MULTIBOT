@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { normalizeAutoEatConfig } = require('./normalizeAutoEatConfig');
 
 // 默认不信任任何玩家：公开占位名会被他人改名冒充，真实名单必须在
 // 实例 config.json / default.config.json 或 trustedPlayersFile 中显式指定。
@@ -208,6 +209,14 @@ function getDefaultLegacyConfig() {
       unknownWhisperReply: ''
     },
     fish: false,
+    autoEat: {
+      enabled: false,
+      threshold: 19,
+      items: [],
+      cooldownMs: 3000,
+      failureBackoffMs: 30000,
+      maxFailures: 3
+    },
     ScriptScheduler: getDefaultScriptSchedulerConfig(),
     attack: {
       autoAttack: false,
@@ -369,6 +378,7 @@ function normalizeLegacyConfig(rawConfig, defaultConfig = getDefaultLegacyConfig
         : defaultConfig.chat.unknownWhisperReply
     },
     fish: rawConfig.fish !== undefined ? rawConfig.fish === true : defaultConfig.fish,
+    autoEat: normalizeAutoEatConfig(rawConfig.autoEat, defaultConfig.autoEat),
     ScriptScheduler: normalizeScriptSchedulerConfig(rawConfig.ScriptScheduler),
     attack: {
       ...defaultConfig.attack,

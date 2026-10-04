@@ -42,6 +42,10 @@ class CommandDispatcher {
     return this.getCapabilities().terrainHandling !== false;
   }
 
+  isInventoryHandlingEnabled() {
+    return this.getCapabilities().inventoryHandling !== false;
+  }
+
   formatCapabilitySuffix(requirements = {}) {
     const disabled = [];
 
@@ -51,6 +55,10 @@ class CommandDispatcher {
 
     if (requirements.terrainHandling === true && !this.isTerrainHandlingEnabled()) {
       disabled.push('terrainHandling');
+    }
+
+    if (requirements.inventoryHandling === true && !this.isInventoryHandlingEnabled()) {
+      disabled.push('inventoryHandling');
     }
 
     return disabled.length > 0 ? ` [已禁用: ${disabled.join('+')}]` : '';
@@ -65,6 +73,10 @@ class CommandDispatcher {
 
     if (requirements.terrainHandling === true && !this.isTerrainHandlingEnabled()) {
       disabled.push('地形处理');
+    }
+
+    if (requirements.inventoryHandling === true && !this.isInventoryHandlingEnabled()) {
+      disabled.push('背包处理');
     }
 
     if (disabled.length === 0) {
@@ -111,7 +123,8 @@ class CommandDispatcher {
       '  ride | ride <uuid>',
       withCapability('ride player | ride w [a]', { entityHandling: true, terrainHandling: true }),
       withCapability('fish', { entityHandling: true }),
-      '  eat <物品id>',
+      withCapability('eat <物品id>', { inventoryHandling: true }),
+      withCapability('autoeat [on|off|status]', { inventoryHandling: true }),
       withCapability('attack @n', { entityHandling: true }),
       withCapability('interact @n', { entityHandling: true }),
       withCapability('useblock <x> <y> <z>', { terrainHandling: true }),
@@ -415,8 +428,20 @@ class CommandDispatcher {
     }
 
     if (command === 'eat') {
+      if (!this.ensureCapabilities(context, 'eat', { inventoryHandling: true })) {
+        return true;
+      }
+
       const itemArg = trimmed.slice(rawParts[0].length).trim();
       return this.eatFeature.handleEatCommand(context, itemArg);
+    }
+
+    if (command === 'autoeat') {
+      if (!this.ensureCapabilities(context, 'autoeat', { inventoryHandling: true })) {
+        return true;
+      }
+
+      return this.eatFeature.handleAutoEatCommand(context, lowerParts[1] || 'status');
     }
 
     if (command === 'attack' && lowerParts[1] === '@n' && rawParts.length === 2) {

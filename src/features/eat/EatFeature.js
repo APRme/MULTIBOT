@@ -24,6 +24,9 @@ class EatFeature {
     this.inventoryFeature = options.inventoryFeature;
     this.fishFeature = options.fishFeature;
     this.bot = null;
+    this.getRotation = options.getRotation || null;
+    this.useItemSequence = 0;
+    this.autoEatController = null;
   }
 
   attach(bot) {
@@ -224,6 +227,242 @@ class EatFeature {
     });
   }
 
+  // ===== 轻量模式进食: 没有 mineflayer inventory 插件, 自建"使用物品"这一步 =====
+
+  isFullConsumeAvailable() {
+    return typeof this.bot?.consume === 'function';
+  }
+
+  nextUseItemSequence() {
+    this.useItemSequence = (this.useItemSequence + 1) % 32767;
+    return this.useItemSequence;
+  }
+
+  resolveUseItemRotation() {
+    if (Number.isFinite(this.bot?.entity?.yaw)) {
+      return {
+        x: Math.fround(toNotchianPitch(this.bot.entity.pitch)),
+        y: Math.fround(toNotchianYaw(this.bot.entity.yaw))
+      };
+    }
+
+    if (typeof this.getRotation === 'function') {
+      const raw = this.getRotation();
+      if (raw && Number.isFinite(raw.yaw) && Number.isFinite(raw.pitch)) {
+        return {
+          x: Math.fround(toNotchianPitch(raw.pitch)),
+          y: Math.fround(toNotchianYaw(raw.yaw))
+        };
+      }
+    }
+
+    return { x: 0, y: 0 };
+  }
+
+  async consumeHeldItemLightweight(timeoutMs = MANUAL_CONSUME_TIMEOUT) {
+    const client = this.bot && this.bot._client;
+    if (!client || typeof client.write !== 'function') {
+      throw new Error('当前连接不支持轻量进食');
+    }
+
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      let timeoutId = null;
+      const initialFood = this.bot.food;
+      const initialHeldType = this.bot.heldItem ? this.bot.heldItem.type : null;
+
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        client.removeListener('entity_status', onEntityStatus);
+        client.removeListener('set_slot', onSlotChanged);
+        client.removeListener('window_items', onSlotChanged);
+        client.removeListener('set_cooldown', onCooldown);
+        this.bot.removeListener('health', onHealth);
+      };
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      // 轻量模式没有 bot.entity: 用"我们自己刚发的 use_item"作为前提, 收到 9(进食完成) 即成功
+      const onEntityStatus = (packet) => {
+        if (!packet || packet.entityStatus !== 9) return;
+        const selfId = this.bot.entity?.id;
+        if (selfId === undefined || packet.entityId === selfId) {
+          finish();
+        }
+      };
+
+      const onSlotChanged = () => finish();
+      const onCooldown = () => finish();
+      const onHealth = () => {
+        if (Number.isFinite(initialFood) && Number.isFinite(this.bot.food) && this.bot.food > initialFood) {
+          finish();
+          return;
+        }
+        const heldType = this.bot.heldItem ? this.bot.heldItem.type : null;
+        if (heldType !== initialHeldType) {
+          finish();
+        }
+      };
+
+      client.on('entity_status', onEntityStatus);
+      client.on('set_slot', onSlotChanged);
+      client.on('window_items', onSlotChanged);
+      client.on('set_cooldown', onCooldown);
+      this.bot.on('health', onHealth);
+
+      timeoutId = setTimeout(() => fail(new Error('Consume timeout')), timeoutMs);
+
+      try {
+        client.write('use_item', {
+          hand: 0,
+          sequence: this.nextUseItemSequence(),
+          rotation: this.resolveUseItemRotation()
+        });
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
+
+  async consumeHeldItem(itemId) {
+    if (this.isFullConsumeAvailable()) {
+      await this.consumeHeldItemWithWhitelistSupport(itemId);
+      return;
+    }
+
+    await this.consumeHeldItemLightweight();
+  }
+
+  // 命令与自动进食共用: 找到物品 -> 弄到主手 -> 吃 -> 还原, 返回结构化结果(不回复消息)
+  async consumeFromInventory(itemId) {
+    const matches = this.inventoryFeature && typeof this.inventoryFeature.findItem === 'function'
+      ? this.inventoryFeature.findItem(itemId, true)
+      : [];
+    const match = matches[0];
+
+    if (!match || !match.item) {
+      return { ok: false, stage: 'find', itemId, itemName: itemId };
+    }
+
+    if (!this.isAllowedEatItem(itemId)) {
+      return { ok: false, stage: 'validate', itemId, itemName: itemId };
+    }
+
+    // 普通食物在满饱食度时原版拒绝进食(白名单物品如不详之瓶不受限), 提前给出清晰错误而不是等超时
+    const isWhitelistItem = this.isExtraEdibleItem(itemId);
+    if (!isWhitelistItem && this.bot.game?.gameMode !== 'creative' && this.bot.food === 20) {
+      return { ok: false, stage: 'full', itemId, itemName: itemId };
+    }
+
+    const inventory = this.bot.inventory;
+    const hotbarStart = inventory.hotbarStart ?? 36;
+    const handSlot = hotbarStart + this.bot.quickBarSlot;
+    const previousQuickBarSlot = this.bot.quickBarSlot;
+    const originalHandItem = inventory.slots[handSlot];
+    const targetItem = match.item;
+    const sourceSlot = targetItem.slot;
+    const isTargetInCurrentHand = sourceSlot === handSlot;
+    const isTargetInHotbar = sourceSlot >= hotbarStart && sourceSlot < hotbarStart + 9;
+    const itemName = targetItem.displayName || targetItem.name || itemId;
+
+    let restoreMode = 'none';
+    let consumeError = null;
+    let restoreError = null;
+
+    try {
+      if (this.logger) {
+        this.logger.info(`[EAT] try item=${itemId} mode=${this.isFullConsumeAvailable() ? 'full' : 'lightweight'}`);
+      }
+
+      if (isTargetInCurrentHand) {
+        restoreMode = 'none';
+      } else if (isTargetInHotbar) {
+        await this.bot.setQuickBarSlot(sourceSlot - hotbarStart);
+        restoreMode = 'quickbar';
+      } else {
+        await this.bot.moveSlotItem(sourceSlot, handSlot);
+        restoreMode = originalHandItem ? 'swap-back' : 'move-back';
+      }
+
+      await this.consumeHeldItem(itemId);
+    } catch (error) {
+      consumeError = error;
+      if (this.logger) {
+        this.logger.warn(`[EAT] consume failed item=${itemId}: ${error.message}`);
+      }
+    } finally {
+      try {
+        if (restoreMode === 'quickbar') {
+          await this.bot.setQuickBarSlot(previousQuickBarSlot);
+        } else if (restoreMode === 'swap-back') {
+          await this.bot.moveSlotItem(sourceSlot, handSlot);
+        } else if (restoreMode === 'move-back') {
+          if (this.bot.inventory.slots[handSlot]) {
+            await this.bot.moveSlotItem(handSlot, sourceSlot);
+          }
+        }
+      } catch (error) {
+        restoreError = error;
+        if (this.logger) {
+          this.logger.warn(`[EAT] restore failed item=${itemId}: ${error.message}`);
+        }
+      }
+    }
+
+    if (!consumeError && !restoreError) {
+      if (this.logger) {
+        this.logger.info(`[EAT] completed item=${itemName}`);
+      }
+      return { ok: true, itemId, itemName };
+    }
+
+    return { ok: false, stage: 'consume', itemId, itemName, consumeError, restoreError };
+  }
+
+  async handleAutoEatCommand(context, arg) {
+    this.ensureReady();
+
+    if (!this.autoEatController) {
+      context.replyError('自动进食不可用(需要背包处理能力)');
+      return true;
+    }
+
+    const action = String(arg || 'status').trim().toLowerCase();
+
+    if (action === 'on' || action === 'off') {
+      const enabled = action === 'on';
+      this.autoEatController.setEnabled(enabled);
+      context.replyInfo(`自动进食已${enabled ? '开启' : '关闭'}`);
+      return true;
+    }
+
+    if (action === 'status' || action === '') {
+      const state = this.autoEatController.getState();
+      const foodText = state.items.length > 0 ? state.items.join(',') : '自动择优';
+      const lastText = state.lastResult ? ` | 上次=${state.lastResult}` : '';
+      context.replyInfo(`自动进食: ${state.enabled ? '开启' : '关闭'} | 阈值=${state.threshold} | 食物=${foodText} | 当前饱食=${this.bot.food}${lastText}`);
+      return true;
+    }
+
+    context.replyError('用法: autoeat on|off|status');
+    return true;
+  }
+
   async handleEatCommand(context, itemArg) {
     this.ensureReady();
 
@@ -254,94 +493,38 @@ class EatFeature {
       return true;
     }
 
-    const matches = this.inventoryFeature && typeof this.inventoryFeature.findItem === 'function'
-      ? this.inventoryFeature.findItem(normalizedItemId, true)
-      : [];
-    const match = matches[0];
+    const result = await this.consumeFromInventory(normalizedItemId);
 
-    if (!match || !match.item) {
+    if (result.ok) {
+      return true;
+    }
+
+    if (result.stage === 'find') {
       context.replyError(`未在背包中找到物品: ${rawItemId}`);
       return true;
     }
 
-    if (!this.isAllowedEatItem(normalizedItemId)) {
+    if (result.stage === 'validate') {
       context.replyError(`物品 ${rawItemId} 不可食用`);
       return true;
     }
 
-    const inventory = this.bot.inventory;
-    const hotbarStart = inventory.hotbarStart ?? 36;
-    const handSlot = hotbarStart + this.bot.quickBarSlot;
-    const previousQuickBarSlot = this.bot.quickBarSlot;
-    const originalHandItem = inventory.slots[handSlot];
-    const targetItem = match.item;
-    const sourceSlot = targetItem.slot;
-    const isTargetInCurrentHand = sourceSlot === handSlot;
-    const isTargetInHotbar = sourceSlot >= hotbarStart && sourceSlot < hotbarStart + 9;
-    const itemName = targetItem.displayName || targetItem.name || normalizedItemId;
-
-    let restoreMode = 'none';
-    let consumeError = null;
-    let restoreError = null;
-
-    try {
-      if (this.logger) {
-        this.logger.info(`[EAT] try item=${normalizedItemId}`);
-      }
-
-      if (isTargetInCurrentHand) {
-        restoreMode = 'none';
-      } else if (isTargetInHotbar) {
-        await this.bot.setQuickBarSlot(sourceSlot - hotbarStart);
-        restoreMode = 'quickbar';
-      } else {
-        await this.bot.moveSlotItem(sourceSlot, handSlot);
-        restoreMode = originalHandItem ? 'swap-back' : 'move-back';
-      }
-
-      await this.consumeHeldItemWithWhitelistSupport(normalizedItemId);
-    } catch (error) {
-      consumeError = error;
-      if (this.logger) {
-        this.logger.warn(`[EAT] consume failed item=${normalizedItemId}: ${error.message}`);
-      }
-    } finally {
-      try {
-        if (restoreMode === 'quickbar') {
-          await this.bot.setQuickBarSlot(previousQuickBarSlot);
-        } else if (restoreMode === 'swap-back') {
-          await this.bot.moveSlotItem(sourceSlot, handSlot);
-        } else if (restoreMode === 'move-back') {
-          if (this.bot.inventory.slots[handSlot]) {
-            await this.bot.moveSlotItem(handSlot, sourceSlot);
-          }
-        }
-      } catch (error) {
-        restoreError = error;
-        if (this.logger) {
-          this.logger.warn(`[EAT] restore failed item=${normalizedItemId}: ${error.message}`);
-        }
-      }
-    }
-
-    if (!consumeError && !restoreError) {
-      if (this.logger) {
-        this.logger.info(`[EAT] completed item=${itemName}`);
-      }
+    if (result.stage === 'full') {
+      context.replyError(`饱食度已满，无需进食 ${rawItemId}`);
       return true;
     }
 
-    if (consumeError && !restoreError) {
-      context.replyError(`食用失败: ${consumeError.message}`);
+    if (result.consumeError && !result.restoreError) {
+      context.replyError(`食用失败: ${result.consumeError.message}`);
       return true;
     }
 
-    if (!consumeError && restoreError) {
-      context.replyError(`已食用 ${itemName}，但主手恢复失败: ${restoreError.message}`);
+    if (!result.consumeError && result.restoreError) {
+      context.replyError(`已食用 ${result.itemName}，但主手恢复失败: ${result.restoreError.message}`);
       return true;
     }
 
-    context.replyError(`食用失败: ${consumeError.message}；主手恢复失败: ${restoreError.message}`);
+    context.replyError(`食用失败: ${result.consumeError.message}；主手恢复失败: ${result.restoreError.message}`);
     return true;
   }
 }

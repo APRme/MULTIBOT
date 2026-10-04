@@ -227,7 +227,9 @@ test('BotRuntime exposes action and restart state in summaries', () => {
     sneaking: true,
     digging: true,
     areaDigging: true,
-    scriptRunning: true
+    scriptRunning: true,
+    autoEatEnabled: false,
+    autoEating: false
   });
   assert.deepEqual(summary.capabilities, {
     entityHandling: true,

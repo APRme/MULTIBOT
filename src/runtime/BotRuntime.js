@@ -34,6 +34,7 @@ const { MonitoringFeature } = require('../features/monitoring/MonitoringFeature'
 const { ActivityLogFeature } = require('../features/activityLog/ActivityLogFeature');
 const { CplaceFeature } = require('../features/cplace/CplaceFeature');
 const { EatFeature } = require('../features/eat/EatFeature');
+const { AutoEatController } = require('../features/eat/AutoEatController');
 const { WindowFeature } = require('../features/window/WindowFeature');
 const { isIgnorableMalformedNbtArrayError } = require('../legacy/assn/protocol-guard-hotfix');
 const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
@@ -485,6 +486,8 @@ class BotRuntime {
     this.pingTimer = null;
     this.pingResolve = null;
     this.lastKnownPosition = null;
+    this.lastKnownYaw = null;
+    this.lastKnownPitch = null;
     this.barkNotifier = options.barkNotifier || null;
     this.lastBarkAuthNotifyAt = 0;
     this.decompressorErrorGuarded = new WeakSet();
@@ -599,7 +602,9 @@ class BotRuntime {
     this.eatFeature = new EatFeature({
       logger: this.logger,
       inventoryFeature: this.inventoryFeature,
-      fishFeature: this.fishFeature
+      fishFeature: this.fishFeature,
+      // 轻量模式没有 bot.entity, 用服务端 position 包里记下的朝向(弧度)
+      getRotation: () => ({ yaw: this.lastKnownYaw, pitch: this.lastKnownPitch })
     });
     this.scriptFeature = new ScriptFeature({
       logger: this.logger,
@@ -645,6 +650,18 @@ class BotRuntime {
       windowFeature: this.windowFeature
     });
     this.scriptFeature.setExecuteCommand(async (content, context) => this.executeCommand(content, context));
+
+    // 自动进食: 配置来自实例 config.json / 服务器 default.config.json(经既有合并链)
+    this.autoEatController = new AutoEatController({
+      logger: this.logger,
+      config: this.config.legacyConfig.autoEat,
+      eatFeature: this.eatFeature,
+      inventoryFeature: this.inventoryFeature,
+      fishFeature: this.fishFeature,
+      attackFeature: this.attackFeature,
+      digFeature: this.digFeature
+    });
+    this.eatFeature.autoEatController = this.autoEatController;
   }
 
   getCapabilities() {
@@ -1584,7 +1601,9 @@ class BotRuntime {
     this.attachLightInventoryCore(bot);
     this.inventoryFeature.attach(bot);
     this.windowFeature.attach(bot);
-    this.logCapabilitySkip('movement/eat/block-container', 'because lightweight mode (no entity/terrain)');
+    // 轻量模式也支持进食与自动进食(靠轻量背包核心的窗口点击 + 自建 use_item)
+    this.autoEatController.attach(bot);
+    this.logCapabilitySkip('movement/block-container', 'because lightweight mode (no entity/terrain)');
   }
 
   refreshWorldColumnDiagnostics() {
@@ -1926,6 +1945,14 @@ class BotRuntime {
               z: packet.z
             };
           }
+
+          // 协议里的 yaw/pitch 是角度, 这里统一存成弧度(与 mineflayer 的 bot.entity 一致)
+          if (packet && Number.isFinite(packet.yaw)) {
+            this.lastKnownYaw = packet.yaw * (Math.PI / 180);
+          }
+          if (packet && Number.isFinite(packet.pitch)) {
+            this.lastKnownPitch = packet.pitch * (Math.PI / 180);
+          }
         });
 
         // 服务器按客户端回报速率(chunk_batch_received)推送区块; 轻量 bot 不加载区块,
@@ -1979,6 +2006,7 @@ class BotRuntime {
       this.windowFeature.attach(bot);
       this.movementFeature.attach(bot);
       this.eatFeature.attach(bot);
+      this.autoEatController.attach(bot);
     }
 
     if (this.isEntityHandlingEnabled()) {
@@ -2233,6 +2261,7 @@ class BotRuntime {
       this.rideFeature,
       this.movementFeature,
       this.eatFeature,
+      this.autoEatController,
       this.trustedPlayersStore,
       this.teleportFeature,
       this.chatFeature,
@@ -2942,6 +2971,7 @@ class BotRuntime {
 
     this.fishFeature.stop();
     this.rideFeature.stop();
+    this.autoEatController.stop();
     this.movementFeature.stop();
     this.digFeature.stop();
     this.blockUseFeature.stop();
@@ -3073,6 +3103,7 @@ class BotRuntime {
     const rideState = this.rideFeature.getState ? this.rideFeature.getState() : {};
     const digState = this.digFeature.getState ? this.digFeature.getState() : {};
     const scriptState = this.scriptFeature.getState ? this.scriptFeature.getState() : {};
+    const autoEatState = this.autoEatController && this.autoEatController.getState ? this.autoEatController.getState() : {};
 
     return {
       fishing: fishState.isFishing === true,
@@ -3081,7 +3112,9 @@ class BotRuntime {
       sneaking: movementState.isSneaking === true,
       digging: digState.isDigging === true,
       areaDigging: digState.isAreaDigging === true,
-      scriptRunning: scriptState.isRunning === true
+      scriptRunning: scriptState.isRunning === true,
+      autoEatEnabled: autoEatState.enabled === true,
+      autoEating: autoEatState.eating === true
     };
   }
 
