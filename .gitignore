@@ -18,6 +18,9 @@ memory_dump/
 # Local bot instances may contain account names, server details, and private whitelists.
 BOTS/
 
+# Local operator scripts (kept on disk and synced to the server, never versioned)
+/scripts/
+
 # Local config overrides
 *.local.json
 *.local.js
