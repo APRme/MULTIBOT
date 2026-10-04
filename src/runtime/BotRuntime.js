@@ -1237,6 +1237,13 @@ class BotRuntime {
     const shape = getChatWindowPacketShape(bot.version);
     if (!shape || (!shape.chat_message && !shape.chat_command_signed)) return;
 
+    // 是否"有意禁用签名"(后端默认 true, 见 createMineflayerOptions)。
+    // 注意: 不能用 !client.profileKeys 来判断 —— 实测禁用签名时该字段仍可能存在,
+    // 会放行上游"新消息插在 index 0"的错位窗口(offset=23/位图 20 位/checksum=182),
+    // 服务端校验失败后表现为 chat_validation_failed 踢出或直接静默断开连接。
+    const signingDisabled = this.config.disableChatSigning !== false;
+    this.unsignedChatWindowOverrideLogged = false;
+
     // 清空上游追踪器: 保证我们这一侧永远不会"确认"任何消息(否则会与服务端窗口叠加出错)
     if (client._lastSeenMessages) {
       if (Array.isArray(client._lastSeenMessages)) {
@@ -1292,8 +1299,16 @@ class BotRuntime {
       }
 
       const packetShape = shape[name];
-      // 注释: 动态判断(而非挂载时判断), 避免密钥在连接后才就绪时误判
-      if (packetShape && params && typeof params === 'object' && !client.profileKeys) {
+      // 签名被禁用的场景一律由我们上报"恒定空窗口"; 只有"启用签名且确有密钥"时才交给上游维护
+      if (packetShape && params && typeof params === 'object' && (signingDisabled || !client.profileKeys)) {
+        const upstreamOffset = Number(params[packetShape.offsetField]) || 0;
+        const upstreamAck = Buffer.isBuffer(params.acknowledged) ? params.acknowledged : null;
+        const upstreamHadWindow = upstreamOffset > 0 || (upstreamAck && upstreamAck.some((byte) => byte !== 0));
+        if (upstreamHadWindow && !this.unsignedChatWindowOverrideLogged) {
+          this.unsignedChatWindowOverrideLogged = true;
+          this.logger.warn('[PROTOCOL] 检测到上游发出了非空 lastSeen 窗口, 已按 disableChatSigning 归一为空更新(offset=0/位图全 0/checksum=0), 避免服务端校验失败');
+        }
+
         const offset = Math.max(0, signedPending - 40);
         if (offset > 0) {
           signedPending -= offset;

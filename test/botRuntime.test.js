@@ -1507,13 +1507,16 @@ test('BotRuntime attachUnsignedChatWindowGuard neutralizes the lastSeen window w
   assert.deepEqual(commandWrite.params.acknowledged, Buffer.from([0, 0, 0]));
   assert.equal(commandWrite.params.checksum, 0);
 
-  // 有密钥时不干预(那条路径需要真正维护窗口)
+  // 关键回归: 禁用签名时, 即使 client.profileKeys 仍存在(实测如此), 也必须归一到空更新,
+  // 否则会放行上游"新消息插 index 0"的错位窗口 => 服务端踢出或静默断开
   client.profileKeys = { private: Buffer.alloc(1) };
-  client.write('chat_message', { message: 'x', offset: 3, acknowledged: Buffer.from([1, 2, 3]), checksum: 7 });
+  client.write('chat_message', { message: 'x', offset: 23, acknowledged: Buffer.from([0xff, 0xff, 0xf0]), checksum: 182 });
   const signedWrite = writes.filter((entry) => entry.name === 'chat_message').pop();
-  assert.equal(signedWrite.params.offset, 3);
-  assert.deepEqual(signedWrite.params.acknowledged, Buffer.from([1, 2, 3]));
-  assert.equal(signedWrite.params.checksum, 7);
+  assert.equal(signedWrite.params.offset, 0, '偏移必须归零');
+  assert.deepEqual(signedWrite.params.acknowledged, Buffer.from([0, 0, 0]), '位图必须清空');
+  assert.equal(signedWrite.params.checksum, 0);
+  const overrideLogs = runtime.logger.getRecent().filter((entry) => entry.message.includes('非空 lastSeen 窗口'));
+  assert.equal(overrideLogs.length, 1, '首次覆盖非空窗口只告警一次');
 
   // 其它包不受影响
   client.write('keep_alive', { keepAliveId: 1n });
@@ -1525,6 +1528,39 @@ test('BotRuntime attachUnsignedChatWindowGuard neutralizes the lastSeen window w
   client.write('chat_message', { message: 'after', offset: 4, acknowledged: Buffer.from([9]), checksum: 9 });
   const restored = writes.filter((entry) => entry.name === 'chat_message').pop();
   assert.equal(restored.params.offset, 4, '解绑后不再改写');
+});
+
+test('BotRuntime attachUnsignedChatWindowGuard leaves the window alone when signing is enabled', () => {
+  const runtime = createRuntime({
+    config: {
+      disableChatSigning: false,
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+
+  const writes = [];
+  const client = new EventEmitter();
+  client.profileKeys = { private: Buffer.alloc(1) };
+  client.write = (name, params) => {
+    writes.push({ name, params });
+  };
+  const bot = { _client: client, version: '1.21.11' };
+
+  runtime.attachUnsignedChatWindowGuard(bot);
+
+  client.write('chat_message', { message: 'signed', offset: 3, acknowledged: Buffer.from([1, 2, 3]), checksum: 7 });
+  const signedWrite = writes.filter((entry) => entry.name === 'chat_message').pop();
+  assert.equal(signedWrite.params.offset, 3, '启用签名且有密钥时保持上游行为');
+  assert.deepEqual(signedWrite.params.acknowledged, Buffer.from([1, 2, 3]));
+  assert.equal(signedWrite.params.checksum, 7);
+
+  // 启用签名但没有密钥时, 仍然要归一(继承旧行为)
+  client.profileKeys = null;
+  client.write('chat_message', { message: 'nokey', offset: 5, acknowledged: Buffer.from([9]), checksum: 9 });
+  const noKeyWrite = writes.filter((entry) => entry.name === 'chat_message').pop();
+  assert.equal(noKeyWrite.params.offset, 0);
+  assert.deepEqual(noKeyWrite.params.acknowledged, Buffer.from([0, 0, 0]));
+  assert.equal(noKeyWrite.params.checksum, 0);
 });
 
 test('BotRuntime attachUnsignedChatWindowGuard skips versions without the ack window fields', () => {
