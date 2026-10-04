@@ -491,6 +491,9 @@ class BotRuntime {
     this.desyncWatchdogTimer = null;
     this.desyncWatchdogEpoch = null;
     this.protocolErrorLogPath = options.protocolErrorLogPath || null; // 由 BotManager 指向 <appRoot>/logs/protocol-errors.log; 为空时回退 <cwd>/logs
+    this.lastOutgoingChatAt = null; // 观测用: 最近一次发言时间戳(不记录任何聊天内容)
+    this.lastOutgoingChatIsCommand = false;
+    this.lastEndReason = null;
     this.diagnostics = {
       connectionCount: 0,
       currentConnectionStartedAt: null,
@@ -2011,8 +2014,19 @@ class BotRuntime {
       this.handleError(error);
     });
 
-    this.addRuntimeListener(bot, 'end', () => {
-      void this.handleEnd(epoch);
+    // 观测用: 只记录"最近一次发言"的时间与类型(是否 / 命令), 不记录内容;
+    // 用于判断"说话即断"类现象, 并把 mineflayer 的 end reason 带进日志与 lifecycle
+    if (typeof bot.chat === 'function') {
+      const originalChat = bot.chat.bind(bot);
+      bot.chat = (message) => {
+        this.lastOutgoingChatAt = Date.now();
+        this.lastOutgoingChatIsCommand = typeof message === 'string' && message.startsWith('/');
+        return originalChat(message);
+      };
+    }
+
+    this.addRuntimeListener(bot, 'end', (reason) => {
+      void this.handleEnd(epoch, reason);
     });
 
     return this.getDetails();
@@ -2228,7 +2242,44 @@ class BotRuntime {
     }
   }
 
-  async handleEnd(epoch) {
+  // 把 mineflayer 传进来的 end reason 归一成一行可读文本(踢出包里可能是 JSON 组件)
+  describeEndReason(reason) {
+    if (reason === undefined || reason === null || reason === '') {
+      return 'unknown';
+    }
+
+    let text;
+    if (typeof reason === 'string') {
+      text = reason;
+    } else {
+      try {
+        text = JSON.stringify(reason);
+      } catch (error) {
+        text = String(reason);
+      }
+    }
+
+    const trimmed = String(text).replace(/\s+/g, ' ').trim();
+    return trimmed.length > 180 ? `${trimmed.slice(0, 180)}...` : trimmed;
+  }
+
+  // 连接时长 + 距最近一次发言的时间(只有时间戳/类型, 没有内容)
+  describeEndContext() {
+    const startedAtMs = Date.parse(this.diagnostics.currentConnectionStartedAt || '');
+    const uptimeText = Number.isFinite(startedAtMs)
+      ? ` uptime=${Math.max(0, Math.round((Date.now() - startedAtMs) / 1000))}s`
+      : '';
+
+    if (!Number.isFinite(this.lastOutgoingChatAt)) {
+      return `${uptimeText} sinceLastChat=none`;
+    }
+
+    const sinceChatMs = Math.max(0, Date.now() - this.lastOutgoingChatAt);
+    const kind = this.lastOutgoingChatIsCommand ? 'command' : 'chat';
+    return `${uptimeText} sinceLastChat=${(sinceChatMs / 1000).toFixed(1)}s(${kind})`;
+  }
+
+  async handleEnd(epoch, endReason) {
     if (epoch !== undefined && epoch !== this.connectionEpoch) {
       return;
     }
@@ -2237,6 +2288,9 @@ class BotRuntime {
     this.clearOpenAuthRequestWatchdog();
     const wasStarting = this.state === 'starting';
     const endedAt = getTimestamp();
+    const endReasonText = this.describeEndReason(endReason);
+    const endContext = this.describeEndContext();
+    this.lastEndReason = endReasonText;
     this.lastEndAt = endedAt;
     this.diagnostics.currentConnectionEndedAt = endedAt;
     const endedBot = this.bot;
@@ -2256,10 +2310,13 @@ class BotRuntime {
     ) {
       this.handleOpenAuthRequestWatchdogTimeout(endedBot?._client, { quit: false });
     }
-    this.logger.warn('[BOT] end');
+    this.logger.warn(`[BOT] end reason=${endReasonText}${endContext}`);
     const disconnectReason = this.pendingRestartReason
       || (backendUnavailable ? 'backend_unavailable' : 'disconnect');
-    this.recordLifecycle(LIFECYCLE_EVENTS.BOT_DISCONNECT, { reason: disconnectReason });
+    this.recordLifecycle(LIFECYCLE_EVENTS.BOT_DISCONNECT, {
+      reason: disconnectReason,
+      detail: `endReason=${endReasonText}${endContext}`
+    });
     this.clearLegacyAutoRestartTimer();
     await this.finalizeEndedBot(endedBot, 'end', { publishStopped: false, endedAt });
 

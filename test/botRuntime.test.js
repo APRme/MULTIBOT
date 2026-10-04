@@ -1688,6 +1688,41 @@ test('BotRuntime desync watchdog also covers parse errors that were not swallowe
   assert.match(fs.readFileSync(logFile, 'utf8'), /parse error unswallowed .*reason=burst_limit/);
 });
 
+test('BotRuntime logs the end reason and time since the last outgoing chat', async () => {
+  const runtime = createRuntime();
+  runtime.state = 'online';
+  runtime.diagnostics.currentConnectionStartedAt = new Date(Date.now() - 5000).toISOString();
+  runtime.lastOutgoingChatAt = Date.now() - 1500;
+  runtime.lastOutgoingChatIsCommand = false;
+
+  await runtime.handleEnd(undefined, 'socketClosed');
+
+  const logs = runtime.logger.getRecent();
+  const endLog = logs.find((entry) => entry.message.includes('[BOT] end'));
+  assert.ok(endLog, '应输出 [BOT] end');
+  assert.match(endLog.message, /reason=socketClosed/);
+  assert.match(endLog.message, /uptime=[45]s/);
+  assert.match(endLog.message, /sinceLastChat=1\.[0-9]s\(chat\)/);
+  assert.equal(runtime.lastEndReason, 'socketClosed');
+});
+
+test('BotRuntime end reason and context survive missing or structured reasons', async () => {
+  const runtime = createRuntime();
+  runtime.state = 'online';
+
+  assert.equal(runtime.describeEndReason(undefined), 'unknown');
+  assert.equal(runtime.describeEndReason('keepAliveError'), 'keepAliveError');
+  assert.equal(runtime.describeEndReason({ text: 'kicked by admin' }), '{"text":"kicked by admin"}');
+  assert.match(runtime.describeEndContext(), /sinceLastChat=none/);
+
+  runtime.lastOutgoingChatAt = Date.now();
+  runtime.lastOutgoingChatIsCommand = true;
+  assert.match(runtime.describeEndContext(), /sinceLastChat=[0-9.]+s\(command\)/);
+
+  await runtime.handleEnd(undefined, { extra: 'x'.repeat(400) });
+  assert.equal(runtime.lastEndReason.length, 183, '过长 reason 截断并加省略号');
+});
+
 test('BotRuntime executes lock-after-expire command when online', () => {
   const chats = [];
   const runtime = createRuntime({
