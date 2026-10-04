@@ -108,7 +108,8 @@ class CommandDispatcher {
       withCapability('goto <x> <y> <z> [选项...]', { terrainHandling: true }),
       '  shift',
       '  circle',
-      withCapability('ride | ride player | ride w [a]', { entityHandling: true, terrainHandling: true }),
+      '  ride | ride <uuid>',
+      withCapability('ride player | ride w [a]', { entityHandling: true, terrainHandling: true }),
       withCapability('fish', { entityHandling: true }),
       '  eat <物品id>',
       withCapability('attack @n', { entityHandling: true }),
@@ -393,7 +394,9 @@ class CommandDispatcher {
     }
 
     if (command === 'ride') {
-      if (!this.ensureEntityAndTerrainHandling(context, 'ride')) {
+      // 轻量模式(entityHandling/terrainHandling 全关)下, ride 与 ride <uuid> 由轻量实体索引支持
+      const lightweightRide = !this.isEntityHandlingEnabled() && !this.isTerrainHandlingEnabled();
+      if (!lightweightRide && !this.ensureEntityAndTerrainHandling(context, 'ride')) {
         return true;
       }
 

@@ -543,7 +543,9 @@ class BotRuntime {
     });
     this.rideFeature = new RideFeature({
       logger: this.logger,
-      setPhysicsEnabled: (enabled) => this.applyPhysicsStandby(enabled)
+      setPhysicsEnabled: (enabled) => this.applyPhysicsStandby(enabled),
+      // 轻量模式没有 bot.entity, 用协议层 position 包记录的坐标做距离判断
+      getSelfPosition: () => this.lastKnownPosition
     });
     this.fishFeature = new FishFeature({
       logger: this.logger,
@@ -1970,6 +1972,8 @@ class BotRuntime {
     this.activityLogFeature.attach(bot);
     if (this.isLightweightMode()) {
       this.attachLightweightFeatures(bot);
+      // 轻量模式也能 ride: 靠协议层 spawn_entity/entity_destroy 维护的极简实体索引
+      this.rideFeature.attachLightweight(bot);
     } else {
       this.inventoryFeature.attach(bot);
       this.windowFeature.attach(bot);

@@ -1,5 +1,10 @@
 const { pathfinder, goals: { GoalNear } } = require('mineflayer-pathfinder');
 const { buildDefaultMovements } = require('../../util/pathfinding');
+const { LightweightEntityIndex, normalizeUuid } = require('./LightweightEntityIndex');
+
+const LIGHTWEIGHT_MOUNT_TIMEOUT_MS = 2000;
+const LIGHTWEIGHT_DISMOUNT_STEP_MS = 600;
+const LIGHTWEIGHT_INTERACT_RANGE = 3;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -9,11 +14,15 @@ class RideFeature {
   constructor(options = {}) {
     this.logger = options.logger;
     this.setPhysicsEnabled = options.setPhysicsEnabled || (() => {});
+    this.getSelfPosition = options.getSelfPosition || null;
     this.bot = null;
     this.isRiding = false;
     this.vehicleMovementInterval = null;
     this.currentMovement = { left: 0, forward: 0 };
     this.listeners = [];
+    this.lightweightIndex = null;
+    this.lightweight = false;
+    this.ridingEntityId = null;
   }
 
   attach(bot) {
@@ -256,7 +265,18 @@ class RideFeature {
   }
 
   async handleRideCommand(context, parts) {
+    // 轻量模式(无 entities 插件): 走按 UUID / 最近实体的精简路径
+    if (this.lightweightIndex) {
+      return this.handleLightweightRideCommand(context, parts);
+    }
+
     this.ensureReady();
+
+    // ride <uuid>: 直接指定实体(与轻量模式语义一致)
+    if (parts.length === 2 && normalizeUuid(parts[1]).length === 32) {
+      await this.startRidingByUuid(context, parts[1]);
+      return true;
+    }
 
     if (parts.length === 1) {
       if (this.isRiding && this.bot.vehicle) {
@@ -317,6 +337,23 @@ class RideFeature {
       return;
     }
 
+    await this.rideTargetEntity(context, targetEntity);
+  }
+
+  async startRidingByUuid(context, uuid) {
+    const key = normalizeUuid(uuid);
+    const entities = this.bot && this.bot.entities ? Object.values(this.bot.entities) : [];
+    const targetEntity = entities.find((entity) => entity && normalizeUuid(entity.uuid) === key) || null;
+
+    if (!targetEntity) {
+      context.replyError('附近没有找到该 UUID 的实体');
+      return;
+    }
+
+    await this.rideTargetEntity(context, targetEntity);
+  }
+
+  async rideTargetEntity(context, targetEntity) {
     const entityName = targetEntity.displayName || targetEntity.name || '未知实体';
     context.replyInfo(`正在靠近 ${entityName}...`);
 
@@ -379,12 +416,244 @@ class RideFeature {
 
   stop() {
     this.stopVehicleMovement();
-    this.isRiding = Boolean(this.bot && this.bot.vehicle);
+    this.isRiding = this.lightweight ? this.isRiding : Boolean(this.bot && this.bot.vehicle);
     this.setPhysicsEnabled(false);
+  }
+
+  // ==================== 轻量模式(不加载 entities/inventory 插件) ====================
+
+  attachLightweight(bot) {
+    this.detach();
+    this.bot = bot;
+    this.lightweight = true;
+    this.isRiding = false;
+    this.ridingEntityId = null;
+
+    const client = bot && bot._client;
+    if (!client || typeof client.on !== 'function') {
+      return;
+    }
+
+    const index = new LightweightEntityIndex({
+      logger: this.logger,
+      typeIds: this.resolveRideableTypeIds(bot),
+      maxEntries: 64
+    });
+
+    if (!index.attach(client, { bot })) {
+      return;
+    }
+
+    this.lightweightIndex = index;
+
+    this.addListener(client, 'set_passengers', (packet) => this.handlePassengers(packet));
+    this.addListener(client, 'entity_destroy', (packet) => {
+      const ids = packet && Array.isArray(packet.entityIds) ? packet.entityIds : [];
+      if (this.ridingEntityId !== null && ids.includes(this.ridingEntityId)) {
+        this.ridingEntityId = null;
+        this.isRiding = false;
+        if (this.logger) {
+          this.logger.warn('[RIDE] 载具已消失, 骑乘状态已复位');
+        }
+      }
+    });
+    this.addListener(client, 'end', () => {
+      this.ridingEntityId = null;
+      this.isRiding = false;
+    });
+  }
+
+  // 只索引矿车/船这类可骑乘实体(名字匹配, 兼容各版本的命名差异)
+  resolveRideableTypeIds(bot) {
+    try {
+      const data = require('minecraft-data')(bot.version);
+      const byName = data && data.entitiesByName ? data.entitiesByName : null;
+      if (!byName) return null;
+
+      const ids = [];
+      for (const [name, entity] of Object.entries(byName)) {
+        if (/minecart|boat|raft/i.test(name) && entity && Number.isFinite(entity.id)) {
+          ids.push(entity.id);
+        }
+      }
+
+      return ids.length > 0 ? [...new Set(ids)] : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  handlePassengers(packet) {
+    const index = this.lightweightIndex;
+    const selfId = index ? index.selfEntityId : null;
+    const vehicleId = packet && Number.isFinite(packet.entityId) ? packet.entityId : null;
+    const passengers = packet && Array.isArray(packet.passengers) ? packet.passengers : [];
+
+    if (!index || vehicleId === null || selfId === null) {
+      return;
+    }
+
+    if (passengers.includes(selfId)) {
+      if (!this.isRiding || this.ridingEntityId !== vehicleId) {
+        this.isRiding = true;
+        this.ridingEntityId = vehicleId;
+        if (this.logger) {
+          this.logger.info(`[RIDE] mounted entity=${vehicleId}`);
+        }
+      }
+      return;
+    }
+
+    if (this.ridingEntityId === vehicleId) {
+      this.ridingEntityId = null;
+      this.isRiding = false;
+      if (this.logger) {
+        this.logger.info('[RIDE] dismounted');
+      }
+    }
+  }
+
+  async handleLightweightRideCommand(context, parts) {
+    const arg = parts.length >= 2 ? String(parts[1] || '') : '';
+    const sub = arg.toLowerCase();
+
+    if (parts.length === 1) {
+      if (this.isRiding) {
+        await this.dismountLightweight(context);
+        return true;
+      }
+
+      await this.rideLightweightNearest(context);
+      return true;
+    }
+
+    if (parts.length === 2 && sub === 'player') {
+      context.replyError('轻量模式不支持 ride player(需要实体处理)');
+      return true;
+    }
+
+    if (sub === 'w') {
+      context.replyError('轻量模式不支持 ride w(需要实体与地形处理)');
+      return true;
+    }
+
+    if (parts.length === 2 && normalizeUuid(arg).length === 32) {
+      await this.rideLightweightByUuid(context, arg);
+      return true;
+    }
+
+    context.replyError('用法: ride | ride <uuid>');
+    return true;
+  }
+
+  async rideLightweightNearest(context) {
+    const target = this.lightweightIndex.nearest(this.getSelfPosition ? this.getSelfPosition() : null);
+    if (!target) {
+      context.replyError('附近没有已知的可骑乘实体(可改用 ride <uuid>)');
+      return;
+    }
+
+    await this.mountLightweight(context, target);
+  }
+
+  async rideLightweightByUuid(context, uuid) {
+    const target = this.lightweightIndex.findByUuid(uuid);
+    if (!target) {
+      context.replyError('该 UUID 的实体当前不在视野内(先靠近它, 或等它进入视野后再试)');
+      return;
+    }
+
+    await this.mountLightweight(context, target);
+  }
+
+  async mountLightweight(context, entity) {
+    const selfPosition = this.getSelfPosition ? this.getSelfPosition() : null;
+    if (selfPosition && Number.isFinite(selfPosition.x)) {
+      const dx = entity.x - selfPosition.x;
+      const dy = entity.y - selfPosition.y;
+      const dz = entity.z - selfPosition.z;
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (distance > LIGHTWEIGHT_INTERACT_RANGE) {
+        context.replyError(`距离过远 (${distance.toFixed(1)}格, 需要 ≤${LIGHTWEIGHT_INTERACT_RANGE}格)`);
+        return;
+      }
+    }
+
+    // 与上游 bot.mount() 等价: use_entity + mouse=0(INTERACT);
+    // 1.21.11 协议在 mouse=0/2 时要求带 hand 字段
+    this.bot._client.write('use_entity', {
+      target: entity.id,
+      mouse: 0,
+      hand: 0,
+      sneaking: false
+    });
+
+    const mounted = await this.waitForLightweightMount(entity.id, LIGHTWEIGHT_MOUNT_TIMEOUT_MS);
+    if (mounted) {
+      context.replyInfo(`已骑上 ${this.lightweightIndex.describe(entity)}, 发送 ride 下来`);
+      return;
+    }
+
+    context.replyError('骑乘失败: 可能矿车已满、距离过远或被服务端拒绝');
+  }
+
+  async dismountLightweight(context) {
+    if (!this.isRiding) {
+      context.replyInfo('已下来');
+      return;
+    }
+
+    // 上游 dismount() 发 player_input.jump; 完整版 RideFeature 另外补了 sneak 脉冲, 这里两条都试
+    this.writePlayerInput({ shift: true });
+    let dismounted = await this.waitForLightweightDismount(LIGHTWEIGHT_DISMOUNT_STEP_MS);
+
+    if (!dismounted) {
+      this.writePlayerInput({ shift: false, jump: true });
+      dismounted = await this.waitForLightweightDismount(LIGHTWEIGHT_DISMOUNT_STEP_MS);
+    }
+
+    this.writePlayerInput({ shift: false, jump: false });
+
+    if (!dismounted && this.isRiding) {
+      context.replyError('下来失败: 当前仍在骑乘状态');
+      return;
+    }
+
+    context.replyInfo('已下来');
+  }
+
+  writePlayerInput(inputs) {
+    if (!this.bot || !this.bot._client || typeof this.bot._client.write !== 'function') return;
+    this.bot._client.write('player_input', { inputs: { ...inputs } });
+  }
+
+  async waitForLightweightMount(entityId, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.isRiding && this.ridingEntityId === entityId) return true;
+      await sleep(50);
+    }
+
+    return this.isRiding && this.ridingEntityId === entityId;
+  }
+
+  async waitForLightweightDismount(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.isRiding) return true;
+      await sleep(50);
+    }
+
+    return !this.isRiding;
   }
 
   detach() {
     this.stopVehicleMovement();
+
+    if (this.lightweightIndex) {
+      this.lightweightIndex.detach();
+      this.lightweightIndex = null;
+    }
 
     for (const listener of this.listeners) {
       if (listener.target && typeof listener.target.removeListener === 'function') {
@@ -394,12 +663,16 @@ class RideFeature {
 
     this.listeners = [];
     this.isRiding = false;
+    this.ridingEntityId = null;
+    this.lightweight = false;
     this.bot = null;
   }
 
   getState() {
     return {
-      isRiding: this.isRiding || Boolean(this.bot && this.bot.vehicle)
+      isRiding: this.isRiding || Boolean(this.bot && this.bot.vehicle),
+      ridingEntityId: this.ridingEntityId,
+      mode: this.lightweight ? 'lightweight' : 'full'
     };
   }
 }

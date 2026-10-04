@@ -482,7 +482,8 @@ test('CommandDispatcher blocks terrain-gated commands when terrainHandling is di
     ['attack']
   ]);
   assert.ok(context.messages.some((entry) => entry.message.includes('goto <x> <y> <z> [选项...] [已禁用: terrainHandling]')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('ride | ride player | ride w [a] [已禁用: terrainHandling]')));
+  assert.ok(context.messages.some((entry) => entry.message.includes('ride | ride <uuid>')));
+  assert.ok(context.messages.some((entry) => entry.message.includes('ride player | ride w [a] [已禁用: terrainHandling]')));
   assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=on terrainHandling=off inventoryHandling=on')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 goto')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 useblock')));
