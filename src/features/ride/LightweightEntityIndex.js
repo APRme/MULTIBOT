@@ -22,12 +22,29 @@ class LightweightEntityIndex {
     this.maxEntries = Number.isInteger(options.maxEntries) && options.maxEntries > 0
       ? options.maxEntries
       : 64;
+    this.onIndexed = typeof options.onIndexed === 'function' ? options.onIndexed : null;
     this.byId = new Map();
     this.byUuid = new Map();
     this.selfEntityId = null;
     this.listeners = [];
     this.deltaScale = null;
     this.client = null;
+  }
+
+  // 供报错/日志使用: 当前索引概况(便于判断"是索引为空还是 UUID 不匹配")
+  summary(limit = 5) {
+    if (this.byId.size === 0) {
+      return '已索引 0 个可骑乘实体';
+    }
+
+    const parts = [];
+    for (const entity of this.byId.values()) {
+      parts.push(`${(entity.uuid || 'n/a').slice(0, 8)}(id=${entity.id})`);
+      if (parts.length >= limit) break;
+    }
+
+    const suffix = this.byId.size > parts.length ? ` 等 ${this.byId.size} 个` : '';
+    return `已索引 ${this.byId.size} 个可骑乘实体: ${parts.join(', ')}${suffix}`;
   }
 
   attach(client, options = {}) {
@@ -121,6 +138,10 @@ class LightweightEntityIndex {
     }
 
     this.pruneIfNeeded();
+
+    if (this.onIndexed) {
+      this.onIndexed(entity, this);
+    }
   }
 
   handleDestroy(packet) {

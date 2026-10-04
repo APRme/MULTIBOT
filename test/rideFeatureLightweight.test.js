@@ -51,7 +51,9 @@ function createHarness(options = {}) {
   });
   feature.attachLightweight(bot);
 
-  client.emit('login', { entityId: SELF_ENTITY_ID });
+  if (!options.skipLogin) {
+    client.emit('login', { entityId: SELF_ENTITY_ID });
+  }
 
   return { client, writes, feature, bot, selfPosition };
 }
@@ -189,6 +191,56 @@ test('轻量模式 ride player / ride w 明确拒绝并给出用法', async () =
   assert.match(text, /不支持 ride player/);
   assert.match(text, /不支持 ride w/);
   assert.match(text, /用法: ride \| ride <uuid>/);
+});
+
+test('轻量模式 未捕获 login 时按交互结果推断自身 entityId(自愈)', async () => {
+  const harness = createHarness({ skipLogin: true });
+  const context = createContext();
+  spawnCart(harness.client, { entityId: 42, uuid: CART_UUID, x: 1 });
+
+  await harness.feature.handleRideCommand(context, ['ride', CART_UUID]);
+
+  assert.deepEqual(context.errors, [], '自愈后应判定为上车成功');
+  assert.equal(harness.feature.lightweightIndex.selfEntityId, SELF_ENTITY_ID);
+  assert.equal(harness.feature.isRiding, true);
+  assert.equal(harness.feature.ridingEntityId, 42);
+});
+
+test('轻量模式 索引为空/UUID 不匹配时的报错自带索引概况', async () => {
+  const empty = createHarness();
+  const emptyContext = createContext();
+
+  await empty.feature.handleRideCommand(emptyContext, ['ride', CART_UUID]);
+  assert.match(emptyContext.errors.join('\n'), /不在视野内/);
+  assert.match(emptyContext.errors.join('\n'), /已索引 0 个可骑乘实体/);
+
+  emptyContext.errors.length = 0;
+  await empty.feature.handleRideCommand(emptyContext, ['ride']);
+  assert.match(emptyContext.errors.join('\n'), /已索引 0 个可骑乘实体/);
+
+  const indexed = createHarness();
+  const indexedContext = createContext();
+  spawnCart(indexed.client, { entityId: 42, uuid: CART_UUID, x: 1 });
+
+  await indexed.feature.handleRideCommand(indexedContext, ['ride', OTHER_CART_UUID]);
+  assert.match(indexedContext.errors.join('\n'), /已索引 1 个可骑乘实体: 507a3b7e\(id=42\)/);
+});
+
+test('轻量模式 索引到可骑乘实体时回调可用于日志', () => {
+  const client = new EventEmitter();
+  const indexed = [];
+  const index = new LightweightEntityIndex({
+    typeIds: [85],
+    onIndexed: (entity) => indexed.push(entity)
+  });
+  index.attach(client, { bot: { version: '1.21.11', supportFeature: () => false } });
+
+  spawnCart(client, { entityId: 42, uuid: CART_UUID });
+  spawnCart(client, { entityId: 43, uuid: OTHER_CART_UUID, type: 1 });
+
+  assert.equal(indexed.length, 1);
+  assert.equal(indexed[0].id, 42);
+  index.detach();
 });
 
 test('轻量模式 载具被销毁或连接结束时骑乘状态复位', async () => {

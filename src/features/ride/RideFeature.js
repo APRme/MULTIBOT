@@ -23,6 +23,7 @@ class RideFeature {
     this.lightweightIndex = null;
     this.lightweight = false;
     this.ridingEntityId = null;
+    this.pendingMountEntityId = null;
   }
 
   attach(bot) {
@@ -437,7 +438,12 @@ class RideFeature {
     const index = new LightweightEntityIndex({
       logger: this.logger,
       typeIds: this.resolveRideableTypeIds(bot),
-      maxEntries: 64
+      maxEntries: 64,
+      onIndexed: (entity) => {
+        if (this.logger) {
+          this.logger.info(`[RIDE] 已索引可骑乘实体 id=${entity.id} uuid=${(entity.uuid || 'n/a').slice(0, 8)} type=${entity.type}`);
+        }
+      }
     });
 
     if (!index.attach(client, { bot })) {
@@ -445,6 +451,9 @@ class RideFeature {
     }
 
     this.lightweightIndex = index;
+    if (this.logger) {
+      this.logger.info('[RIDE] 轻量骑乘已就绪(仅索引矿车/船; 命令: ride | ride <uuid>)');
+    }
 
     this.addListener(client, 'set_passengers', (packet) => this.handlePassengers(packet));
     this.addListener(client, 'entity_destroy', (packet) => {
@@ -485,11 +494,27 @@ class RideFeature {
 
   handlePassengers(packet) {
     const index = this.lightweightIndex;
-    const selfId = index ? index.selfEntityId : null;
     const vehicleId = packet && Number.isFinite(packet.entityId) ? packet.entityId : null;
     const passengers = packet && Array.isArray(packet.passengers) ? packet.passengers : [];
 
-    if (!index || vehicleId === null || selfId === null) {
+    if (!index || vehicleId === null) {
+      return;
+    }
+
+    // 兜底: 若没捕获到 login 里的自身 entityId, 就用"刚交互过的载具 + 非空乘客列表"推断
+    if (
+      index.selfEntityId === null &&
+      this.pendingMountEntityId === vehicleId &&
+      passengers.length > 0
+    ) {
+      index.selfEntityId = passengers[0];
+      if (this.logger) {
+        this.logger.warn(`[RIDE] 未捕获 login 的自身 entityId, 按交互结果推断为 ${passengers[0]}`);
+      }
+    }
+
+    const selfId = index.selfEntityId;
+    if (selfId === null) {
       return;
     }
 
@@ -549,7 +574,7 @@ class RideFeature {
   async rideLightweightNearest(context) {
     const target = this.lightweightIndex.nearest(this.getSelfPosition ? this.getSelfPosition() : null);
     if (!target) {
-      context.replyError('附近没有已知的可骑乘实体(可改用 ride <uuid>)');
+      context.replyError(`附近没有已知的可骑乘实体(可改用 ride <uuid>) [${this.lightweightIndex.summary()}]`);
       return;
     }
 
@@ -559,7 +584,7 @@ class RideFeature {
   async rideLightweightByUuid(context, uuid) {
     const target = this.lightweightIndex.findByUuid(uuid);
     if (!target) {
-      context.replyError('该 UUID 的实体当前不在视野内(先靠近它, 或等它进入视野后再试)');
+      context.replyError(`该 UUID 的实体当前不在视野内(先靠近它, 或等它进入视野后再试) [${this.lightweightIndex.summary()}]`);
       return;
     }
 
@@ -581,6 +606,7 @@ class RideFeature {
 
     // 与上游 bot.mount() 等价: use_entity + mouse=0(INTERACT);
     // 1.21.11 协议在 mouse=0/2 时要求带 hand 字段
+    this.pendingMountEntityId = entity.id;
     this.bot._client.write('use_entity', {
       target: entity.id,
       mouse: 0,
@@ -589,12 +615,15 @@ class RideFeature {
     });
 
     const mounted = await this.waitForLightweightMount(entity.id, LIGHTWEIGHT_MOUNT_TIMEOUT_MS);
+    this.pendingMountEntityId = null;
+
     if (mounted) {
       context.replyInfo(`已骑上 ${this.lightweightIndex.describe(entity)}, 发送 ride 下来`);
       return;
     }
 
-    context.replyError('骑乘失败: 可能矿车已满、距离过远或被服务端拒绝');
+    const selfId = this.lightweightIndex.selfEntityId;
+    context.replyError(`骑乘失败: 可能矿车已满、距离过远或被服务端拒绝 (自身entityId=${selfId === null ? '未知' : selfId}, 索引 ${this.lightweightIndex.size} 个)`);
   }
 
   async dismountLightweight(context) {
@@ -664,6 +693,7 @@ class RideFeature {
     this.listeners = [];
     this.isRiding = false;
     this.ridingEntityId = null;
+    this.pendingMountEntityId = null;
     this.lightweight = false;
     this.bot = null;
   }
