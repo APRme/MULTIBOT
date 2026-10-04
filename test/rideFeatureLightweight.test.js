@@ -47,7 +47,8 @@ function createHarness(options = {}) {
 
   const feature = new RideFeature({
     logger: null,
-    getSelfPosition: () => selfPosition
+    getSelfPosition: () => selfPosition,
+    ...(options.featureOptions || {})
   });
   feature.attachLightweight(bot);
 
@@ -241,6 +242,59 @@ test('轻量模式 索引到可骑乘实体时回调可用于日志', () => {
   assert.equal(indexed.length, 1);
   assert.equal(indexed[0].id, 42);
   index.detach();
+});
+
+test('轻量模式 交互过早时会持续重试直到收到上车确认', async () => {
+  const writes = [];
+  const client = new EventEmitter();
+  let attempt = 0;
+
+  client.write = (name, params) => {
+    writes.push({ name, params });
+    // 模拟 vanilla 行为: 前两次交互(玩家刚加入的窗口内)被服务端忽略, 第三次才生效
+    if (name === 'use_entity') {
+      attempt += 1;
+      if (attempt >= 3) {
+        setImmediate(() => client.emit('set_passengers', { entityId: params.target, passengers: [SELF_ENTITY_ID] }));
+      }
+    }
+  };
+
+  const bot = { version: '1.21.11', _client: client, supportFeature: () => true };
+  const feature = new RideFeature({
+    logger: null,
+    getSelfPosition: () => ({ x: 0, y: 64, z: 0 }),
+    mountAttemptMs: 40,
+    mountTotalMs: 3000
+  });
+  feature.attachLightweight(bot);
+  client.emit('login', { entityId: SELF_ENTITY_ID });
+  spawnCart(client, { entityId: 42, uuid: CART_UUID, x: 1 });
+
+  const context = createContext();
+  await feature.handleRideCommand(context, ['ride', CART_UUID]);
+
+  assert.deepEqual(context.errors, []);
+  assert.match(context.info.join('\n'), /已骑上/);
+  assert.equal(attempt >= 3, true, '必须重试到成功为止');
+  assert.equal(feature.isRiding, true);
+  assert.equal(feature.ridingEntityId, 42);
+});
+
+test('轻量模式 始终收不到确认时按交互次数报失败', async () => {
+  const harness = createHarness({
+    featureOptions: { mountAttemptMs: 30, mountTotalMs: 150 }
+  });
+  const context = createContext();
+  harness.client.removeAllListeners('set_passengers');
+  // 让 write 不再自动回 set_passengers(默认 harness 会回, 这里改成永不回)
+  harness.client.write = () => {};
+  spawnCart(harness.client, { entityId: 42, uuid: CART_UUID, x: 1 });
+
+  await harness.feature.handleRideCommand(context, ['ride', CART_UUID]);
+
+  assert.match(context.errors.join('\n'), /交互 \d+ 次均未收到上车确认/);
+  assert.equal(harness.feature.isRiding, false);
 });
 
 test('轻量模式 载具被销毁或连接结束时骑乘状态复位', async () => {

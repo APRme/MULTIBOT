@@ -3,6 +3,10 @@ const { buildDefaultMovements } = require('../../util/pathfinding');
 const { LightweightEntityIndex, normalizeUuid } = require('./LightweightEntityIndex');
 
 const LIGHTWEIGHT_MOUNT_TIMEOUT_MS = 2000;
+// 玩家刚加入后的一段时间内服务端会忽略实体交互(实测 vanilla 1.21.11 约 3 秒),
+// 因此上车不是"发一次就完", 而是持续重试到总窗口结束
+const LIGHTWEIGHT_MOUNT_ATTEMPT_MS = 1200;
+const LIGHTWEIGHT_MOUNT_TOTAL_MS = 12000;
 const LIGHTWEIGHT_DISMOUNT_STEP_MS = 600;
 const LIGHTWEIGHT_INTERACT_RANGE = 3;
 
@@ -455,7 +459,14 @@ class RideFeature {
       this.logger.info('[RIDE] 轻量骑乘已就绪(仅索引矿车/船; 命令: ride | ride <uuid>)');
     }
 
-    this.addListener(client, 'set_passengers', (packet) => this.handlePassengers(packet));
+    this.addListener(client, 'set_passengers', (packet) => {
+      if (this.logger) {
+        const ids = packet && Array.isArray(packet.passengers) ? packet.passengers : [];
+        const selfId = this.lightweightIndex ? this.lightweightIndex.selfEntityId : null;
+        this.logger.info(`[RIDE] set_passengers vehicle=${packet ? packet.entityId : 'n/a'} passengers=[${ids.join(',')}] self=${selfId === null ? 'n/a' : selfId}`);
+      }
+      this.handlePassengers(packet);
+    });
     this.addListener(client, 'entity_destroy', (packet) => {
       const ids = packet && Array.isArray(packet.entityIds) ? packet.entityIds : [];
       if (this.ridingEntityId !== null && ids.includes(this.ridingEntityId)) {
@@ -605,16 +616,43 @@ class RideFeature {
     }
 
     // 与上游 bot.mount() 等价: use_entity + mouse=0(INTERACT);
-    // 1.21.11 协议在 mouse=0/2 时要求带 hand 字段
+    // 原版在交互实体前会先挥手, 部分服务端/插件依赖这个包, 这里照做
     this.pendingMountEntityId = entity.id;
-    this.bot._client.write('use_entity', {
-      target: entity.id,
-      mouse: 0,
-      hand: 0,
-      sneaking: false
-    });
 
-    const mounted = await this.waitForLightweightMount(entity.id, LIGHTWEIGHT_MOUNT_TIMEOUT_MS);
+    const attemptMs = Number.isFinite(this.mountAttemptMs) && this.mountAttemptMs > 0
+      ? this.mountAttemptMs
+      : LIGHTWEIGHT_MOUNT_ATTEMPT_MS;
+    const totalMs = Number.isFinite(this.mountTotalMs) && this.mountTotalMs > 0
+      ? this.mountTotalMs
+      : LIGHTWEIGHT_MOUNT_TOTAL_MS;
+    const deadline = Date.now() + totalMs;
+
+    let attempts = 0;
+    let mounted = false;
+    let swung = false;
+
+    while (!mounted && Date.now() < deadline) {
+      attempts += 1;
+
+      if (!swung) {
+        this.bot._client.write('arm_animation', { hand: 0 });
+        swung = true;
+      }
+
+      this.writeUseEntity(entity, 0, null);
+      mounted = await this.waitForLightweightMount(entity.id, attemptMs);
+
+      // 原版对实体交互常用 INTERACT_AT(mouse=2) 变体, 第 2 次开始交替尝试
+      if (!mounted && attempts === 1 && Date.now() < deadline) {
+        this.writeUseEntity(entity, 2, { x: 0, y: 0.5, z: 0 });
+        mounted = await this.waitForLightweightMount(entity.id, attemptMs);
+      }
+
+      if (!mounted && Date.now() < deadline) {
+        await sleep(300);
+      }
+    }
+
     this.pendingMountEntityId = null;
 
     if (mounted) {
@@ -623,7 +661,31 @@ class RideFeature {
     }
 
     const selfId = this.lightweightIndex.selfEntityId;
-    context.replyError(`骑乘失败: 可能矿车已满、距离过远或被服务端拒绝 (自身entityId=${selfId === null ? '未知' : selfId}, 索引 ${this.lightweightIndex.size} 个)`);
+    context.replyError(`骑乘失败: 交互 ${attempts} 次均未收到上车确认 (自身entityId=${selfId === null ? '未知' : selfId}, 索引 ${this.lightweightIndex.size} 个)`);
+  }
+
+  writeUseEntity(entity, mouse, hit) {
+    const params = {
+      target: entity.id,
+      mouse,
+      sneaking: false
+    };
+
+    if (mouse === 0 || mouse === 2) {
+      params.hand = 0;
+    }
+
+    if (mouse === 2 && hit) {
+      params.x = hit.x;
+      params.y = hit.y;
+      params.z = hit.z;
+    }
+
+    this.bot._client.write('use_entity', params);
+
+    if (this.logger) {
+      this.logger.info(`[RIDE] use_entity target=${entity.id} mouse=${mouse}${hit ? ` hit=(${hit.x},${hit.y},${hit.z})` : ''}`);
+    }
   }
 
   async dismountLightweight(context) {
