@@ -1646,6 +1646,48 @@ test('BotRuntime desync watchdog can be disabled and falls back to a built-in de
   assert.equal(fallback.desyncWatchdogTimer, null);
 });
 
+test('BotRuntime desync watchdog also covers parse errors that were not swallowed', async () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    },
+    protocolGuardConfig: { logParseErrors: true, desyncSilenceMs: 60 }
+  });
+
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-desync-unswallowed-'));
+  const logFile = path.join(logDir, 'protocol-errors.log');
+  runtime.protocolErrorLogPath = logFile;
+
+  const client = new EventEmitter();
+  client.deserializer = new EventEmitter();
+  client.state = 'play';
+  const quitReasons = [];
+  const bot = {
+    _client: client,
+    quit: (reason) => quitReasons.push(reason)
+  };
+
+  runtime.attachProtocolParseGuard(bot);
+
+  // 突发超限: 协议保护不再吞包, 错误抛给上层(实测上层不会立刻断开, 会拖到 35s 保活超时)
+  client.deserializer.emit('packet_parse_error', {
+    packetId: 16,
+    chunkLength: 512,
+    ignoredCount: 20,
+    reason: 'burst_limit',
+    burstLimit: 20,
+    burstWindowMs: 60000,
+    errorMessage: 'Read error for undefined : array size is abnormally large, not reading: 591808068'
+  });
+
+  assert.deepEqual(quitReasons, [], '刚抛出时不应立即断开');
+  assert.notEqual(runtime.desyncWatchdogTimer, null, '未吞掉的解析异常同样要布置看门狗');
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(quitReasons, ['protocol_desync'], '静默超时后主动断开重连');
+  assert.match(fs.readFileSync(logFile, 'utf8'), /parse error unswallowed .*reason=burst_limit/);
+});
+
 test('BotRuntime executes lock-after-expire command when online', () => {
   const chats = [];
   const runtime = createRuntime({

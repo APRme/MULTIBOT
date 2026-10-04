@@ -84,6 +84,28 @@ function createManagedBotConfig(tempRoot, overrides = {}) {
   };
 }
 
+test('BotManager points the protocol error log under appRoot logs', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-manager-protocol-log-'));
+  const manager = new BotManager({
+    masterConfig: {
+      appRoot: tempRoot,
+      bots: [createBotConfig(tempRoot)]
+    },
+    eventStream: {
+      publish() {}
+    },
+    sessionService: {
+      load() { return null; },
+      save() {},
+      delete() {}
+    }
+  });
+
+  const runtime = manager.getBot('alpha');
+  assert.ok(runtime);
+  assert.equal(runtime.protocolErrorLogPath, path.join(tempRoot, 'logs', 'protocol-errors.log'));
+});
+
 test('BotManager wires runtimes and delegates operations', async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'multibot-manager-'));
   const manager = new BotManager({

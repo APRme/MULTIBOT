@@ -105,13 +105,14 @@ function readPacketId(chunk) {
   }
 }
 
-function buildIgnoredPacketInfo(err, chunk, ignoredCount, config) {
+function buildPacketInfo(err, chunk, ignoredCount, config, reason) {
   return {
     packetId: readPacketId(chunk),
     chunkLength: Buffer.isBuffer(chunk) ? chunk.length : 0,
     ignoredCount,
     burstLimit: config.burstLimit,
     burstWindowMs: config.burstWindowMs,
+    reason: reason || 'ignored',
     errorMessage: err && err.message ? String(err.message) : String(err),
     errorName: err && err.name ? String(err.name) : 'Error'
   };
@@ -140,10 +141,18 @@ function applyProtocolGuardHotfix(config = {}) {
           JSON.stringify(packet.data) + '; buffer :' + chunk.toString('hex'));
       }
     } catch (error) {
+      // 无论最终吞不吞, 都先按窗口统计一次, 便于上层判断"这片流还可不可信"
+      const state = getGuardState(this);
+      const now = Date.now();
+      state.timestamps = pruneTimestamps(state.timestamps, now, configSnapshot.burstWindowMs);
+      const nextCount = state.timestamps.length + 1;
+
+      // 半包: 保持原有"静默丢弃"行为, 但通知上层(它可能是连接卡死的前兆)
       if (error.partialReadError) {
         if (!this.noErrorLogging && configSnapshot.logParseErrors) {
           console.log(error.stack);
         }
+        this.emit('packet_parse_error', buildPacketInfo(error, chunk, state.timestamps.length, configSnapshot, 'partial_read'));
         return cb();
       }
 
@@ -153,21 +162,20 @@ function applyProtocolGuardHotfix(config = {}) {
         isIgnorableMalformedNbtArrayError(error)
       );
 
+      // 不可归类: 原样抛给上层, 同时通知
       if (!shouldIgnore) {
+        this.emit('packet_parse_error', buildPacketInfo(error, chunk, state.timestamps.length, configSnapshot, 'unclassified'));
         return cb(error);
       }
 
-      const state = getGuardState(this);
-      const now = Date.now();
-      state.timestamps = pruneTimestamps(state.timestamps, now, configSnapshot.burstWindowMs);
-
-      const nextCount = state.timestamps.length + 1;
+      // 突发超限: 不再吞包, 原样抛给上层, 同时通知(这条路上层最需要布置看门狗)
       if (nextCount > configSnapshot.burstLimit) {
+        this.emit('packet_parse_error', buildPacketInfo(error, chunk, state.timestamps.length, configSnapshot, 'burst_limit'));
         return cb(error);
       }
 
       state.timestamps.push(now);
-      this.emit('malformed_packet_ignored', buildIgnoredPacketInfo(error, chunk, state.timestamps.length, configSnapshot));
+      this.emit('malformed_packet_ignored', buildPacketInfo(error, chunk, state.timestamps.length, configSnapshot, 'ignored'));
       return cb();
     }
 

@@ -490,7 +490,7 @@ class BotRuntime {
     this.decompressorErrorGuarded = new WeakSet();
     this.desyncWatchdogTimer = null;
     this.desyncWatchdogEpoch = null;
-    this.protocolErrorLogPath = null; // 为空时默认 <cwd>/logs/protocol-errors.log
+    this.protocolErrorLogPath = options.protocolErrorLogPath || null; // 由 BotManager 指向 <appRoot>/logs/protocol-errors.log; 为空时回退 <cwd>/logs
     this.diagnostics = {
       connectionCount: 0,
       currentConnectionStartedAt: null,
@@ -1375,6 +1375,12 @@ class BotRuntime {
       this.addRuntimeListener(deserializer, 'malformed_packet_ignored', (info) => {
         this.handleIgnoredMalformedPacket(bot, info);
       });
+
+      // 未能吞掉的解析异常(突发超限/不可归类/半包): 错误会抛给上层, 连接可能就此静默卡死,
+      // 因此这里也要布置看门狗, 否则只能等 mineflayer 的 35s 保活超时
+      this.addRuntimeListener(deserializer, 'packet_parse_error', (info) => {
+        this.handleUnswallowedParseError(bot, info);
+      });
     }
 
     // 只要还有包进来就说明连接活着 => 撤销看门狗
@@ -1397,6 +1403,22 @@ class BotRuntime {
     }
 
     this.appendProtocolErrorLog(`${getTimestamp()} [${this.config.id}] parse error ignored ${summary}`);
+    this.armDesyncWatchdog(bot, summary);
+  }
+
+  // 协议保护没能吞掉的解析异常(突发超限/不可归类/半包): 错误已抛给上层, 实测上层不会立刻断开,
+  // 连接会静默卡死直到 35s 保活超时。这里补上同一套静默看门狗, 让失联在 desyncSilenceMs 内被发现。
+  handleUnswallowedParseError(bot, info) {
+    const detail = info && typeof info === 'object' ? info : {};
+    const reason = String(detail.reason || 'unclassified');
+    const errorMessage = String(detail.errorMessage || '').split('\n')[0].slice(0, 200);
+    const summary = `packetId=${detail.packetId} chunk=${detail.chunkLength}B reason=${reason} 未吞包(交给上层处理) ${errorMessage}`;
+
+    if (this.protocolGuardConfig.logParseErrors !== false) {
+      this.logger.warn(`[PROTOCOL] 解析异常未能吞掉(${reason}), 已布置失联看门狗: ${summary}`);
+    }
+
+    this.appendProtocolErrorLog(`${getTimestamp()} [${this.config.id}] parse error unswallowed ${summary}`);
     this.armDesyncWatchdog(bot, summary);
   }
 

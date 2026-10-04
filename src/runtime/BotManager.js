@@ -1,3 +1,4 @@
+const path = require('path');
 const { BotRuntime } = require('./BotRuntime');
 const { NotificationWatcher } = require('./NotificationWatcher');
 const { BroadcastService } = require('../control/BroadcastService');
@@ -107,6 +108,8 @@ class BotManager {
       lifecycleLogService: this.lifecycleLogService,
       chatConsoleCoordinator: this.chatConsoleCoordinator,
       protocolGuardConfig: this.masterConfig ? this.masterConfig.protocolGuard : null,
+      // 协议异常日志与其它日志同目录(不依赖进程 cwd; MCSM 启动时 cwd 并非项目根)
+      protocolErrorLogPath: path.join(this.masterConfig?.appRoot || process.cwd(), 'logs', 'protocol-errors.log'),
       diagnosticsConfig: this.diagnosticsConfig,
       barkNotifier: this.barkNotifier,
       loggerBufferSize: Math.max(500, Number.parseInt(this.consoleConnectorConfig?.historyLimit, 10) || 0)
