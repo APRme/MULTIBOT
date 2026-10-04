@@ -227,21 +227,26 @@ test('轻量模式 索引为空/UUID 不匹配时的报错自带索引概况', a
   assert.match(indexedContext.errors.join('\n'), /已索引 1 个可骑乘实体: 507a3b7e\(id=42\)/);
 });
 
-test('轻量模式 索引到可骑乘实体时回调可用于日志', () => {
-  const client = new EventEmitter();
-  const indexed = [];
-  const index = new LightweightEntityIndex({
-    typeIds: [85],
-    onIndexed: (entity) => indexed.push(entity)
+test('轻量模式 并发 ride 会被互斥拒绝, 结束后释放', async () => {
+  const harness = createHarness({
+    featureOptions: { mountAttemptMs: 150, mountTotalMs: 900 }
   });
-  index.attach(client, { bot: { version: '1.21.11', supportFeature: () => false } });
+  const first = createContext();
+  const second = createContext();
+  spawnCart(harness.client, { entityId: 42, uuid: CART_UUID, x: 1 });
 
-  spawnCart(client, { entityId: 42, uuid: CART_UUID });
-  spawnCart(client, { entityId: 43, uuid: OTHER_CART_UUID, type: 1 });
+  // 让交互永不确认 => 第一次调用会一直占着(模拟上车重试期间)
+  harness.client.write = () => {};
 
-  assert.equal(indexed.length, 1);
-  assert.equal(indexed[0].id, 42);
-  index.detach();
+  const inFlight = harness.feature.handleRideCommand(first, ['ride', CART_UUID]);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  await harness.feature.handleRideCommand(second, ['ride', CART_UUID]);
+  assert.match(second.errors.join('\n'), /正在处理上一个 ride 请求/);
+
+  await inFlight;
+  assert.equal(harness.feature.rideInFlight, false, '结束后必须释放互斥');
+  assert.match(first.errors.join('\n'), /均未收到上车确认/);
 });
 
 test('轻量模式 交互过早时会持续重试直到收到上车确认', async () => {

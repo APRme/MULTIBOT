@@ -28,6 +28,7 @@ class RideFeature {
     this.lightweight = false;
     this.ridingEntityId = null;
     this.pendingMountEntityId = null;
+    this.rideInFlight = false;
   }
 
   attach(bot) {
@@ -270,11 +271,25 @@ class RideFeature {
   }
 
   async handleRideCommand(context, parts) {
-    // 轻量模式(无 entities 插件): 走按 UUID / 最近实体的精简路径
-    if (this.lightweightIndex) {
-      return this.handleLightweightRideCommand(context, parts);
+    // 互斥: 一次只处理一个 ride 请求(轻量模式上车最长会重试 12 秒), 避免两个重试循环互抢状态
+    if (this.rideInFlight) {
+      context.replyError('正在处理上一个 ride 请求, 请稍候');
+      return true;
     }
 
+    this.rideInFlight = true;
+    try {
+      if (this.lightweightIndex) {
+        return await this.handleLightweightRideCommand(context, parts);
+      }
+
+      return await this.handleFullRideCommand(context, parts);
+    } finally {
+      this.rideInFlight = false;
+    }
+  }
+
+  async handleFullRideCommand(context, parts) {
     this.ensureReady();
 
     // ride <uuid>: 直接指定实体(与轻量模式语义一致)
@@ -442,12 +457,7 @@ class RideFeature {
     const index = new LightweightEntityIndex({
       logger: this.logger,
       typeIds: this.resolveRideableTypeIds(bot),
-      maxEntries: 64,
-      onIndexed: (entity) => {
-        if (this.logger) {
-          this.logger.info(`[RIDE] 已索引可骑乘实体 id=${entity.id} uuid=${(entity.uuid || 'n/a').slice(0, 8)} type=${entity.type}`);
-        }
-      }
+      maxEntries: 64
     });
 
     if (!index.attach(client, { bot })) {
@@ -756,6 +766,7 @@ class RideFeature {
     this.isRiding = false;
     this.ridingEntityId = null;
     this.pendingMountEntityId = null;
+    this.rideInFlight = false;
     this.lightweight = false;
     this.bot = null;
   }

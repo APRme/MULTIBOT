@@ -22,7 +22,7 @@ class LightweightEntityIndex {
     this.maxEntries = Number.isInteger(options.maxEntries) && options.maxEntries > 0
       ? options.maxEntries
       : 64;
-    this.onIndexed = typeof options.onIndexed === 'function' ? options.onIndexed : null;
+    this.onIndexed = null;
     this.byId = new Map();
     this.byUuid = new Map();
     this.selfEntityId = null;
@@ -138,10 +138,6 @@ class LightweightEntityIndex {
     }
 
     this.pruneIfNeeded();
-
-    if (this.onIndexed) {
-      this.onIndexed(entity, this);
-    }
   }
 
   handleDestroy(packet) {
