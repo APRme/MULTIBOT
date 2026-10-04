@@ -145,6 +145,9 @@ function createRuntime(overrides = {}) {
     },
     broadcastService: overrides.broadcastService || null,
     protocolGuardConfig: overrides.protocolGuardConfig || null,
+    // 默认写进测试临时目录, 避免测试记录污染真实 logs/protocol-errors.log
+    protocolErrorLogPath: overrides.protocolErrorLogPath
+      || path.join(tempRoot, 'logs', 'protocol-errors.log'),
     diagnosticsConfig: overrides.diagnosticsConfig || null,
     barkNotifier: overrides.barkNotifier || null,
     restartPolicyOptions: overrides.restartPolicyOptions || null,
@@ -1721,6 +1724,39 @@ test('BotRuntime end reason and context survive missing or structured reasons', 
 
   await runtime.handleEnd(undefined, { extra: 'x'.repeat(400) });
   assert.equal(runtime.lastEndReason.length, 183, '过长 reason 截断并加省略号');
+});
+
+test('BotRuntime records outgoing chat packet metadata at the write layer', () => {
+  const runtime = createRuntime();
+  const client = new EventEmitter();
+  client.write = () => {};
+  const bot = { version: '1.21.11', _client: client };
+
+  runtime.attachUnsignedChatWindowGuard(bot);
+
+  client.write('chat_message', {
+    message: '1',
+    offset: 0,
+    acknowledged: Buffer.alloc(3, 0),
+    checksum: 0
+  });
+  client.write('keep_alive', { keepAliveId: 1n });
+
+  assert.equal(runtime.chatSendCount, 1, '只统计聊天类包');
+  assert.equal(runtime.lastOutgoingChatIsCommand, false);
+  assert.match(runtime.lastOutgoingChatPacket, /^chat_message\(offset=0 ackBits=0 checksum=0\)$/);
+  assert.match(runtime.describeEndContext(), /chatSends=1 lastChatPacket=chat_message/);
+
+  client.write('chat_command_signed', {
+    command: 'me',
+    messageCount: 0,
+    acknowledged: Buffer.from([1, 0, 0]),
+    checksum: 0
+  });
+
+  assert.equal(runtime.chatSendCount, 2);
+  assert.equal(runtime.lastOutgoingChatIsCommand, true);
+  assert.match(runtime.lastOutgoingChatPacket, /ackBits=1/);
 });
 
 test('BotRuntime executes lock-after-expire command when online', () => {

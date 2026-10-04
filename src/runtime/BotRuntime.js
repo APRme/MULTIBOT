@@ -491,8 +491,10 @@ class BotRuntime {
     this.desyncWatchdogTimer = null;
     this.desyncWatchdogEpoch = null;
     this.protocolErrorLogPath = options.protocolErrorLogPath || null; // 由 BotManager 指向 <appRoot>/logs/protocol-errors.log; 为空时回退 <cwd>/logs
-    this.lastOutgoingChatAt = null; // 观测用: 最近一次发言时间戳(不记录任何聊天内容)
+    this.lastOutgoingChatAt = null; // 观测用: 最近一次外发聊天包时间戳(不记录任何聊天内容)
     this.lastOutgoingChatIsCommand = false;
+    this.lastOutgoingChatPacket = null;
+    this.chatSendCount = 0;
     this.lastEndReason = null;
     this.diagnostics = {
       connectionCount: 0,
@@ -1258,7 +1260,37 @@ class BotRuntime {
 
     const originalWrite = client.write.bind(client);
 
+    // 观测用: 在 write 层记录每一次外发聊天包(覆盖面板/whisper/命令等所有路径, 不只 bot.chat),
+    // 只记包名与窗口字段(offset/位图置位数/checksum), 不记消息内容。
+    const chatPacketKinds = {
+      chat_message: 'chat',
+      chat_command: 'command',
+      chat_command_signed: 'command'
+    };
+
     client.write = (name, params) => {
+      const kind = chatPacketKinds[name];
+      if (kind) {
+        this.chatSendCount += 1;
+        this.lastOutgoingChatAt = Date.now();
+        this.lastOutgoingChatIsCommand = kind === 'command';
+
+        const acknowledged = params && Buffer.isBuffer(params.acknowledged) ? params.acknowledged : null;
+        let ackBits = 0;
+        if (acknowledged) {
+          for (const byte of acknowledged) {
+            for (let bit = 0; bit < 8; bit += 1) {
+              if (byte & (1 << bit)) ackBits += 1;
+            }
+          }
+        }
+
+        const packetShape = shape[name];
+        const offsetField = packetShape ? packetShape.offsetField : null;
+        const offsetValue = offsetField && params ? params[offsetField] : undefined;
+        this.lastOutgoingChatPacket = `${name}(offset=${offsetValue} ackBits=${ackBits} checksum=${params ? params.checksum : undefined})`;
+      }
+
       const packetShape = shape[name];
       // 注释: 动态判断(而非挂载时判断), 避免密钥在连接后才就绪时误判
       if (packetShape && params && typeof params === 'object' && !client.profileKeys) {
@@ -2271,12 +2303,13 @@ class BotRuntime {
       : '';
 
     if (!Number.isFinite(this.lastOutgoingChatAt)) {
-      return `${uptimeText} sinceLastChat=none`;
+      return `${uptimeText} sinceLastChat=none chatSends=${this.chatSendCount}`;
     }
 
     const sinceChatMs = Math.max(0, Date.now() - this.lastOutgoingChatAt);
     const kind = this.lastOutgoingChatIsCommand ? 'command' : 'chat';
-    return `${uptimeText} sinceLastChat=${(sinceChatMs / 1000).toFixed(1)}s(${kind})`;
+    const packetText = this.lastOutgoingChatPacket ? ` lastChatPacket=${this.lastOutgoingChatPacket}` : '';
+    return `${uptimeText} sinceLastChat=${(sinceChatMs / 1000).toFixed(1)}s(${kind}) chatSends=${this.chatSendCount}${packetText}`;
   }
 
   async handleEnd(epoch, endReason) {
