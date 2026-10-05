@@ -470,11 +470,12 @@ class RideFeature {
     }
 
     this.addListener(client, 'set_passengers', (packet) => {
-      if (this.logger) {
-        const ids = packet && Array.isArray(packet.passengers) ? packet.passengers : [];
-        const selfId = this.lightweightIndex ? this.lightweightIndex.selfEntityId : null;
-        this.logger.info(`[RIDE] set_passengers vehicle=${packet ? packet.entityId : 'n/a'} passengers=[${ids.join(',')}] self=${selfId === null ? 'n/a' : selfId}`);
-      }
+      // 调试日志(任意实体的 set_passengers 都会触发, 人多时会刷屏): 需要排查时取消注释
+      // if (this.logger) {
+      //   const ids = packet && Array.isArray(packet.passengers) ? packet.passengers : [];
+      //   const selfId = this.lightweightIndex ? this.lightweightIndex.selfEntityId : null;
+      //   this.logger.info(`[RIDE] set_passengers vehicle=${packet ? packet.entityId : 'n/a'} passengers=[${ids.join(',')}] self=${selfId === null ? 'n/a' : selfId}`);
+      // }
       this.handlePassengers(packet);
     });
     this.addListener(client, 'entity_destroy', (packet) => {
