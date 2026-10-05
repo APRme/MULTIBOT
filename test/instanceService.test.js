@@ -375,3 +375,67 @@ test('InstanceService inherits server default.config.json for new instances whil
   assert.equal(created.legacyConfig.teleport.whitelistFile, 'instance.txt');
   assert.equal(created.legacyConfig.recording.enabled, true);
 });
+
+test('InstanceService skips the full server resync when the default bot config is unchanged', async () => {
+  const { service, botManager } = createServiceFixture();
+  const defaultBotConfig = { chat: { unknownWhisperReply: 'hi' } };
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_one',
+    server: { host: '127.0.0.1', port: 25565 },
+    bot: { username: 'bot_one', autoStart: true },
+    defaultBotConfig
+  });
+
+  botManager.calls.length = 0;
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_two',
+    bot: { username: 'bot_two', autoStart: true },
+    defaultBotConfig
+  });
+
+  const touchedBots = botManager.calls
+    .filter((entry) => entry[0] === 'addOrReplaceBotConfig')
+    .map((entry) => entry[1]);
+  assert.deepEqual(touchedBots, ['server_a__bot_two'], '默认配置未变时只应同步新实例');
+  assert.equal(
+    botManager.calls.some((entry) => entry[0] === 'addOrReplaceBotConfig' && entry[4] === 'instance_default_bot_update'),
+    false,
+    '不应触发该服务器的全量重建(那会导致所有 bot 重连)'
+  );
+});
+
+test('InstanceService still resyncs the whole server when the default bot config changes', async () => {
+  const { service, botManager } = createServiceFixture();
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_one',
+    server: { host: '127.0.0.1', port: 25565 },
+    bot: { username: 'bot_one', autoStart: true },
+    defaultBotConfig: { chat: { unknownWhisperReply: 'before' } }
+  });
+
+  botManager.calls.length = 0;
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_two',
+    bot: { username: 'bot_two', autoStart: true },
+    defaultBotConfig: { chat: { unknownWhisperReply: 'after' } }
+  });
+
+  const touchedBots = botManager.calls
+    .filter((entry) => entry[0] === 'addOrReplaceBotConfig')
+    .map((entry) => entry[1]);
+  assert.ok(touchedBots.includes('server_a__bot_one'), '默认配置变化时已有 bot 也必须同步');
+  assert.ok(touchedBots.includes('server_a__bot_two'));
+  assert.equal(
+    botManager.calls.some((entry) => entry[0] === 'addOrReplaceBotConfig' && entry[4] === 'instance_default_bot_update'),
+    true,
+    '默认配置变化时仍应走全量同步'
+  );
+});

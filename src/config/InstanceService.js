@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { isDeepStrictEqual } = require('util');
 const path = require('path');
 const { resolveBotPaths } = require('./resolveBotPaths');
 const { readJsonFile, buildDiscoveredBotConfig } = require('./loadMasterConfig');
@@ -219,6 +220,16 @@ class InstanceService {
     return this.buildInstanceResponse(botConfig, { includeFiles: true });
   }
 
+  // 服务器级默认配置内容是否真的变了: 没变就不该全量重建(否则新增实例会让该服务器所有 bot 一起重连)
+  isDefaultBotConfigChanged(filePath, incoming) {
+    const current = readJsonFile(filePath, null);
+    if (current === null) {
+      return !(isPlainObject(incoming) && Object.keys(incoming).length === 0);
+    }
+
+    return !isDeepStrictEqual(current, incoming);
+  }
+
   async syncBotConfig(botConfig, options = {}) {
     if (!this.botManager || typeof this.botManager.addOrReplaceBotConfig !== 'function') {
       return null;
@@ -298,12 +309,18 @@ class InstanceService {
       const nextServerConfig = serverConfigExists
         ? deepMerge(readJsonFile(paths.serverConfigPath, {}), serverConfig)
         : { ...serverConfig };
+
+      // 必须在写盘之前比对: 写盘后磁盘内容已等于入参, 再比就永远是"未变化"
+      const defaultConfigChanged = hasDefaultBotConfig && hadExistingBots
+        && this.isDefaultBotConfigChanged(paths.defaultLegacyConfigPath, defaultBotConfig);
+
       writeJsonFile(paths.serverConfigPath, nextServerConfig);
       if (hasDefaultBotConfig) writeJsonFile(paths.defaultLegacyConfigPath, defaultBotConfig);
       writeJsonFile(paths.legacyConfigPath, botConfig);
 
       const builtBotConfig = this.buildBotConfig(serverDirName, botDirName);
-      if (hasDefaultBotConfig && hadExistingBots) {
+
+      if (defaultConfigChanged) {
         await this.syncServerDirectory(serverDirName, {
           reason: 'instance_default_bot_update',
           inheritRunning: true
