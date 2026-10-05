@@ -439,3 +439,143 @@ test('InstanceService still resyncs the whole server when the default bot config
     '默认配置变化时仍应走全量同步'
   );
 });
+
+test('InstanceService resyncs existing bots when server.json changes even if default config is unchanged', async () => {
+  const { service, botManager } = createServiceFixture();
+  const defaultBotConfig = { chat: { unknownWhisperReply: 'hi' } };
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_one',
+    server: { host: 'old.example.com', port: 25565 },
+    bot: { username: 'bot_one', autoStart: true },
+    defaultBotConfig
+  });
+
+  botManager.calls.length = 0;
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_two',
+    server: { host: 'new.example.com', port: 25566 },
+    bot: { username: 'bot_two', autoStart: true },
+    defaultBotConfig
+  });
+
+  const synced = botManager.calls.filter((entry) => entry[0] === 'addOrReplaceBotConfig');
+  const syncedIds = synced.map((entry) => entry[1]);
+  assert.ok(syncedIds.includes('server_a__bot_one'), 'server.json 变化必须下发到该服务器已有 bot');
+  assert.ok(
+    synced.some((entry) => entry[1] === 'server_a__bot_one' && entry[4] === 'instance_server_update'),
+    'reason 应为 instance_server_update'
+  );
+});
+
+test('InstanceService still creates an instance when default.config.json is corrupt', async () => {
+  const { service, appRoot } = createServiceFixture();
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_one',
+    server: { host: '127.0.0.1', port: 25565 },
+    bot: { username: 'bot_one' }
+  });
+
+  const defaultPath = path.join(appRoot, 'BOTS', 'server_a', 'default.config.json');
+  fs.writeFileSync(defaultPath, '{ this is not json', 'utf8');
+
+  const created = await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_two',
+    bot: { username: 'bot_two' },
+    defaultBotConfig: { chat: { unknownWhisperReply: 'fixed' } }
+  });
+
+  assert.equal(created.id, 'server_a__bot_two');
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(defaultPath, 'utf8')),
+    { chat: { unknownWhisperReply: 'fixed' } },
+    '坏掉的默认配置应被覆盖为合法内容'
+  );
+});
+
+test('InstanceService does not resync any bot when a PATCH changes nothing', async () => {
+  const { service, botManager } = createServiceFixture();
+  const defaultBotConfig = { chat: { unknownWhisperReply: 'hi' } };
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_one',
+    server: { host: '127.0.0.1', port: 25565 },
+    bot: { username: 'bot_one', autoStart: true },
+    defaultBotConfig
+  });
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_two',
+    bot: { username: 'bot_two', autoStart: true }
+  });
+
+  botManager.calls.length = 0;
+
+  const result = await service.updateInstance('server_a', 'bot_one', {
+    server: { host: '127.0.0.1', port: 25565 },
+    defaultBotConfig
+  });
+
+  assert.deepEqual(result.affectedBotIds, [], '内容未变时不应报告任何受影响 bot');
+  assert.equal(
+    botManager.calls.filter((entry) => entry[0] === 'addOrReplaceBotConfig').length,
+    0,
+    '内容未变时不应重建任何 bot(避免全量重连)'
+  );
+});
+
+test('InstanceService still resyncs the whole server when a PATCH really changes content', async () => {
+  const { service, botManager } = createServiceFixture();
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_one',
+    server: { host: '127.0.0.1', port: 25565 },
+    bot: { username: 'bot_one', autoStart: true }
+  });
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_two',
+    bot: { username: 'bot_two', autoStart: true }
+  });
+
+  botManager.calls.length = 0;
+
+  const result = await service.updateInstance('server_a', 'bot_one', {
+    server: { host: 'changed.example.com' }
+  });
+
+  assert.ok(result.affectedBotIds.includes('server_a__bot_one'));
+  assert.ok(result.affectedBotIds.includes('server_a__bot_two'));
+  assert.ok(
+    botManager.calls.some((entry) => entry[4] === 'instance_server_update'),
+    '内容真的变化时仍应全量同步'
+  );
+});
+
+test('InstanceService still starts the instance when a PATCH only asks to start it', async () => {
+  const { service, botManager } = createServiceFixture();
+
+  await service.createInstance({
+    serverDir: 'server_a',
+    botDir: 'bot_one',
+    server: { host: '127.0.0.1', port: 25565 },
+    bot: { username: 'bot_one' }
+  });
+
+  botManager.calls.length = 0;
+
+  const result = await service.updateInstance('server_a', 'bot_one', { start: true });
+
+  assert.deepEqual(result.affectedBotIds, [], '仅要求启动时不应重建');
+  assert.equal(botManager.getBotByInstance('server_a', 'bot_one').state, 'online', 'start 仍应生效');
+});

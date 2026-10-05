@@ -221,8 +221,15 @@ class InstanceService {
   }
 
   // 服务器级默认配置内容是否真的变了: 没变就不该全量重建(否则新增实例会让该服务器所有 bot 一起重连)
+  // 解析失败视为"已变化": 后续写盘会覆盖坏文件(旧行为就是直接覆盖, 不能因为比对反而失败)
   isDefaultBotConfigChanged(filePath, incoming) {
-    const current = readJsonFile(filePath, null);
+    let current = null;
+    try {
+      current = readJsonFile(filePath, null);
+    } catch (error) {
+      return true;
+    }
+
     if (current === null) {
       return !(isPlainObject(incoming) && Object.keys(incoming).length === 0);
     }
@@ -285,11 +292,17 @@ class InstanceService {
     const serverConfigExists = fs.existsSync(paths.serverConfigPath);
     const snapshots = [captureFile(paths.serverConfigPath), captureFile(paths.legacyConfigPath)];
     if (hasDefaultBotConfig) snapshots.push(captureFile(paths.defaultLegacyConfigPath));
-    const previousRuntimeConfigs = this.getBotDirectories(serverDirName).map((name) => {
-      const config = this.buildBotConfig(serverDirName, name);
-      const runtime = this.botManager && this.botManager.getBotByInstance(serverDirName, name);
-      return { config, shouldRun: Boolean(runtime && runtime.desiredRunning === true) };
-    });
+    // 回滚用的运行时配置: 该服务器下已有 bot 的配置文件损坏时降级为空, 不阻断本次操作
+    let previousRuntimeConfigs = [];
+    try {
+      previousRuntimeConfigs = this.getBotDirectories(serverDirName).map((name) => {
+        const config = this.buildBotConfig(serverDirName, name);
+        const runtime = this.botManager && this.botManager.getBotByInstance(serverDirName, name);
+        return { config, shouldRun: Boolean(runtime && runtime.desiredRunning === true) };
+      });
+    } catch (error) {
+      previousRuntimeConfigs = [];
+    }
 
     if (!serverExists && !Object.keys(serverConfig).length) {
       throw createHttpError(400, 'server config is required when creating a new serverDir');
@@ -306,13 +319,17 @@ class InstanceService {
     try {
       fs.mkdirSync(paths.botDir, { recursive: true });
 
+      const currentServerConfig = readJsonFile(paths.serverConfigPath, {});
       const nextServerConfig = serverConfigExists
-        ? deepMerge(readJsonFile(paths.serverConfigPath, {}), serverConfig)
+        ? deepMerge(currentServerConfig, serverConfig)
         : { ...serverConfig };
 
       // 必须在写盘之前比对: 写盘后磁盘内容已等于入参, 再比就永远是"未变化"
       const defaultConfigChanged = hasDefaultBotConfig && hadExistingBots
         && this.isDefaultBotConfigChanged(paths.defaultLegacyConfigPath, defaultBotConfig);
+      // server.json 内容变化同样要下发: 否则该服务器已有 bot 会静默沿用旧连接参数
+      const serverConfigChanged = hadExistingBots
+        && !isDeepStrictEqual(currentServerConfig, nextServerConfig);
 
       writeJsonFile(paths.serverConfigPath, nextServerConfig);
       if (hasDefaultBotConfig) writeJsonFile(paths.defaultLegacyConfigPath, defaultBotConfig);
@@ -320,9 +337,9 @@ class InstanceService {
 
       const builtBotConfig = this.buildBotConfig(serverDirName, botDirName);
 
-      if (defaultConfigChanged) {
+      if (defaultConfigChanged || serverConfigChanged) {
         await this.syncServerDirectory(serverDirName, {
-          reason: 'instance_default_bot_update',
+          reason: defaultConfigChanged ? 'instance_default_bot_update' : 'instance_server_update',
           inheritRunning: true
         });
 
@@ -372,11 +389,17 @@ class InstanceService {
     if (hasServerPatch) snapshots.push(captureFile(paths.serverConfigPath));
     if (hasBotPatch) snapshots.push(captureFile(paths.legacyConfigPath));
     if (hasDefaultBotConfig) snapshots.push(captureFile(paths.defaultLegacyConfigPath));
-    const previousRuntimeConfigs = this.getBotDirectories(paths.serverDirName).map((name) => {
-      const config = this.buildBotConfig(paths.serverDirName, name);
-      const runtime = this.botManager && this.botManager.getBotByInstance(paths.serverDirName, name);
-      return { config, shouldRun: Boolean(runtime && runtime.desiredRunning === true) };
-    });
+    // 回滚用的运行时配置: 该服务器下已有 bot 的配置文件损坏时降级为空, 不阻断本次操作
+    let previousRuntimeConfigs = [];
+    try {
+      previousRuntimeConfigs = this.getBotDirectories(paths.serverDirName).map((name) => {
+        const config = this.buildBotConfig(paths.serverDirName, name);
+        const runtime = this.botManager && this.botManager.getBotByInstance(paths.serverDirName, name);
+        return { config, shouldRun: Boolean(runtime && runtime.desiredRunning === true) };
+      });
+    } catch (error) {
+      previousRuntimeConfigs = [];
+    }
 
     if (!hasServerPatch && !hasBotPatch && !hasDefaultBotConfig && payload.start !== true) {
       return {
@@ -386,9 +409,12 @@ class InstanceService {
     }
 
     try {
+      let serverConfigChanged = false;
       if (hasServerPatch) {
         const nextServerConfig = replaceFiles ? { ...serverPatch }
           : deepMerge(readJsonFile(paths.serverConfigPath, {}), serverPatch);
+        // 同样在写盘之前比对: 内容没变就不该让该服务器所有 bot 重连
+        serverConfigChanged = !isDeepStrictEqual(readJsonFile(paths.serverConfigPath, {}), nextServerConfig);
         writeJsonFile(paths.serverConfigPath, nextServerConfig);
       }
       if (hasBotPatch) {
@@ -396,18 +422,26 @@ class InstanceService {
           : deepMerge(readJsonFile(paths.legacyConfigPath, {}), botPatch);
         writeJsonFile(paths.legacyConfigPath, nextBotConfig);
       }
-      if (hasDefaultBotConfig) writeJsonFile(paths.defaultLegacyConfigPath, defaultBotConfig);
+
+      let defaultBotConfigChanged = false;
+      if (hasDefaultBotConfig) {
+        defaultBotConfigChanged = this.isDefaultBotConfigChanged(paths.defaultLegacyConfigPath, defaultBotConfig);
+        writeJsonFile(paths.defaultLegacyConfigPath, defaultBotConfig);
+      }
 
       let affectedBotIds;
-      if (hasServerPatch || hasDefaultBotConfig) {
+      if (serverConfigChanged || defaultBotConfigChanged) {
         affectedBotIds = await this.syncServerDirectory(paths.serverDirName, {
-          reason: hasServerPatch ? 'instance_server_update' : 'instance_default_bot_update',
+          reason: serverConfigChanged ? 'instance_server_update' : 'instance_default_bot_update',
           inheritRunning: true
         });
-      } else {
+      } else if (hasBotPatch) {
         const builtBotConfig = this.buildBotConfig(paths.serverDirName, paths.botDirName);
         await this.syncBotConfig(builtBotConfig, { reason: 'instance_update', inheritRunning: true });
         affectedBotIds = [builtBotConfig.id];
+      } else {
+        // 内容没有任何变化(例如面板"保存"未改动): 不做任何重建, start 由下方逻辑单独处理
+        affectedBotIds = [];
       }
 
       if (payload.start === true && this.botManager) {
