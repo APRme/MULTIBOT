@@ -19,6 +19,7 @@ class CommandDispatcher {
     this.recorderFeature = options.recorderFeature;
     this.teleportFeature = options.teleportFeature;
     this.eatFeature = options.eatFeature;
+    this.treeFarmFeature = options.treeFarmFeature;
     this.windowFeature = options.windowFeature;
   }
 
@@ -125,6 +126,7 @@ class CommandDispatcher {
       withCapability('fish', { entityHandling: true }),
       withCapability('eat <物品id>', { inventoryHandling: true }),
       withCapability('autoeat [on|off|status]', { inventoryHandling: true }),
+      '  treefarm start <x> <y> <z> | treefarm stop | treefarm status',
       withCapability('attack @n', { entityHandling: true }),
       withCapability('interact @n', { entityHandling: true }),
       withCapability('useblock <x> <y> <z>', { terrainHandling: true }),
@@ -425,6 +427,10 @@ class CommandDispatcher {
       }
 
       return this.fishFeature.handleFishCommand(context);
+    }
+
+    if (command === 'treefarm') {
+      return this.treeFarmFeature.handleTreeFarmCommand(context, lowerParts.slice(1));
     }
 
     if (command === 'eat') {

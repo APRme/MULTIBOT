@@ -35,6 +35,7 @@ const { ActivityLogFeature } = require('../features/activityLog/ActivityLogFeatu
 const { CplaceFeature } = require('../features/cplace/CplaceFeature');
 const { EatFeature } = require('../features/eat/EatFeature');
 const { AutoEatController } = require('../features/eat/AutoEatController');
+const { TreeFarmFeature } = require('../features/treefarm/TreeFarmFeature');
 const { WindowFeature } = require('../features/window/WindowFeature');
 const { isIgnorableMalformedNbtArrayError } = require('../legacy/assn/protocol-guard-hotfix');
 const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
@@ -486,6 +487,8 @@ class BotRuntime {
     this.pingTimer = null;
     this.pingResolve = null;
     this.lastKnownPosition = null;
+    // 交互包(block_place/use_item)共用的 sequence 计数器: 两个特性各自计数会导致服务端看到乱序
+    this.interactionSequence = 0;
     this.lastKnownYaw = null;
     this.lastKnownPitch = null;
     this.barkNotifier = options.barkNotifier || null;
@@ -604,8 +607,14 @@ class BotRuntime {
       inventoryFeature: this.inventoryFeature,
       fishFeature: this.fishFeature,
       // 轻量模式没有 bot.entity, 用服务端 position 包里记下的朝向(弧度)
-      getRotation: () => ({ yaw: this.lastKnownYaw, pitch: this.lastKnownPitch })
+      getRotation: () => ({ yaw: this.lastKnownYaw, pitch: this.lastKnownPitch }),
+      getSequence: () => this.nextInteractionSequence()
     });
+    this.treeFarmFeature = new TreeFarmFeature({
+      logger: this.logger,
+      getSequence: () => this.nextInteractionSequence()
+    });
+
     this.scriptFeature = new ScriptFeature({
       logger: this.logger,
       paths: this.config.paths,
@@ -648,6 +657,7 @@ class BotRuntime {
       recorderFeature: this.recorderFeature,
       teleportFeature: this.teleportFeature,
       eatFeature: this.eatFeature,
+      treeFarmFeature: this.treeFarmFeature,
       windowFeature: this.windowFeature
     });
     this.scriptFeature.setExecuteCommand(async (content, context) => this.executeCommand(content, context));
@@ -663,6 +673,11 @@ class BotRuntime {
       digFeature: this.digFeature
     });
     this.eatFeature.autoEatController = this.autoEatController;
+  }
+
+  nextInteractionSequence() {
+    this.interactionSequence = (this.interactionSequence + 1) % 32767;
+    return this.interactionSequence;
   }
 
   getCapabilities() {
@@ -2009,12 +2024,15 @@ class BotRuntime {
       this.attachLightweightFeatures(bot);
       // 轻量模式也能 ride: 靠协议层 spawn_entity/entity_destroy 维护的极简实体索引
       this.rideFeature.attachLightweight(bot);
+    // 树场只依赖 _client 与坐标(不依赖实体/地形/背包), 轻量模式同样可用
+    this.treeFarmFeature.attach(bot);
     } else {
       this.inventoryFeature.attach(bot);
       this.windowFeature.attach(bot);
       this.movementFeature.attach(bot);
       this.eatFeature.attach(bot);
       this.autoEatController.attach(bot);
+      this.treeFarmFeature.attach(bot);
     }
 
     if (this.isEntityHandlingEnabled()) {
@@ -2270,6 +2288,7 @@ class BotRuntime {
       this.movementFeature,
       this.eatFeature,
       this.autoEatController,
+      this.treeFarmFeature,
       this.trustedPlayersStore,
       this.teleportFeature,
       this.chatFeature,
@@ -2980,6 +2999,7 @@ class BotRuntime {
     this.fishFeature.stop();
     this.rideFeature.stop();
     this.autoEatController.stop();
+    this.treeFarmFeature.stop();
     this.movementFeature.stop();
     this.digFeature.stop();
     this.blockUseFeature.stop();
@@ -3112,6 +3132,7 @@ class BotRuntime {
     const digState = this.digFeature.getState ? this.digFeature.getState() : {};
     const scriptState = this.scriptFeature.getState ? this.scriptFeature.getState() : {};
     const autoEatState = this.autoEatController && this.autoEatController.getState ? this.autoEatController.getState() : {};
+    const treeFarmState = this.treeFarmFeature && this.treeFarmFeature.getState ? this.treeFarmFeature.getState() : {};
 
     return {
       fishing: fishState.isFishing === true,
@@ -3122,7 +3143,8 @@ class BotRuntime {
       areaDigging: digState.isAreaDigging === true,
       scriptRunning: scriptState.isRunning === true,
       autoEatEnabled: autoEatState.enabled === true,
-      autoEating: autoEatState.eating === true
+      autoEating: autoEatState.eating === true,
+      treeFarming: treeFarmState.isRunning === true
     };
   }
 

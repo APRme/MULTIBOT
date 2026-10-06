@@ -25,6 +25,7 @@ class EatFeature {
     this.fishFeature = options.fishFeature;
     this.bot = null;
     this.getRotation = options.getRotation || null;
+    this.getSequence = typeof options.getSequence === 'function' ? options.getSequence : null;
     this.useItemSequence = 0;
     this.autoEatController = null;
   }
@@ -234,6 +235,8 @@ class EatFeature {
   }
 
   nextUseItemSequence() {
+    if (this.getSequence) return this.getSequence();
+
     this.useItemSequence = (this.useItemSequence + 1) % 32767;
     return this.useItemSequence;
   }
