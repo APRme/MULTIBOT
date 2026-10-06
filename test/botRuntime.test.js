@@ -3228,3 +3228,36 @@ test('BotRuntime records the expected-running start before creating the bot', as
   assert.equal(runtime.expectedRunningSince, null, '停止后清空, 避免陈旧基准被复用');
   assert.equal(runtime.getSummary().expectedRunningSince, null);
 });
+
+test('BotRuntime lightweight mode acknowledges server teleports', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+
+  const client = new EventEmitter();
+  const writes = [];
+  client.write = (name, params) => { writes.push({ name, params }); };
+  const bot = new EventEmitter();
+  bot._client = client;
+  bot.version = '1.21.11';
+
+  // 直接调用真实的位置/传送确认附加路径(它与世界数据无关, 轻量模式必须自己确认传送)
+  runtime.attachLightweightPositionTracking(bot);
+
+  // 模拟服务端下发带 teleportId 的 position 包(轻量模式没有物理插件, 必须自己确认)
+  client.emit('position', { x: 1, y: 2, z: 3, yaw: 90, pitch: 0, flags: 0, teleportId: 42 });
+  const ack = writes.find((entry) => entry.name === 'teleport_confirm');
+  assert.ok(ack, '必须回传 teleport_confirm');
+  assert.equal(ack.params.teleportId, 42);
+
+  // 没有 teleportId 的普通 position 包不应产生确认
+  writes.length = 0;
+  client.emit('position', { x: 4, y: 5, z: 6, yaw: 0, pitch: 0, flags: 0 });
+  assert.equal(writes.filter((entry) => entry.name === 'teleport_confirm').length, 0);
+
+  runtime.eatFeature.detach();
+  runtime.autoEatController.detach();
+  runtime.treeFarmFeature.detach();
+});

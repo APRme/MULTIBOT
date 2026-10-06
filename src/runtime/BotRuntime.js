@@ -1608,6 +1608,46 @@ class BotRuntime {
     }
   }
 
+  // 轻量模式(无实体插件)下记录协议层位置/朝向, 并确认服务端传送。
+  // 传送确认是必须的: 服务端在等待确认期间(awaitingPositionFromClient 非空)会静默丢弃
+  // useItemOn/useItem, 表现为"服务器 tp 过 bot 之后, 进食/树场等交互彻底失效"。
+  attachLightweightPositionTracking(bot) {
+    if (!bot || !bot._client) return;
+
+    this.addRuntimeListener(bot._client, 'position', (packet) => {
+      // 轻量模式没有物理插件: 必须自己确认服务端传送, 否则服务端会一直等待确认,
+      // 并把随后的 useItemOn/useItem(进食、树场等交互)全部静默丢弃。
+      // 完整模式由 mineflayer 物理插件负责(同样写 teleport_confirm), 这里不重复处理。
+      if (packet && packet.teleportId !== undefined && packet.teleportId !== null) {
+        try {
+          bot._client.write('teleport_confirm', { teleportId: packet.teleportId });
+          if (!this.lightweightTeleportAckLogged) {
+            this.lightweightTeleportAckLogged = true;
+            if (this.logger) this.logger.info('[BOT] 轻量模式已开始确认服务端传送(teleport_confirm)');
+          }
+        } catch (error) {
+          if (this.logger) this.logger.warn(`[BOT] 轻量模式确认传送失败: ${error.message}`);
+        }
+      }
+
+      if (packet && Number.isFinite(packet.x)) {
+        this.lastKnownPosition = {
+          x: packet.x,
+          y: packet.y,
+          z: packet.z
+        };
+      }
+
+      // 协议里的 yaw/pitch 是角度, 这里统一存成弧度(与 mineflayer 的 bot.entity 一致)
+      if (packet && Number.isFinite(packet.yaw)) {
+        this.lastKnownYaw = packet.yaw * (Math.PI / 180);
+      }
+      if (packet && Number.isFinite(packet.pitch)) {
+        this.lastKnownPitch = packet.pitch * (Math.PI / 180);
+      }
+    });
+  }
+
   // 轻量模式的特性装配: 零实体/零地形依赖的部分(自身背包 + 服务器主动打开的窗口 + 进食)。
   // 服务器的菜单/箱子经 open_window 下发, 只需要窗口相关的几个小包, 因此轻量模式也能
   // 与普通模式一样查看/点击/关闭(面板展示、chest 命令、close-window 接口全部复用 WindowFeature)。
@@ -1960,23 +2000,7 @@ class BotRuntime {
 
       // 轻量模式（无实体插件）下通过协议层位置同步包记录坐标，供 getpos 使用
       if (this.isLightweightMode()) {
-        this.addRuntimeListener(bot._client, 'position', (packet) => {
-          if (packet && Number.isFinite(packet.x)) {
-            this.lastKnownPosition = {
-              x: packet.x,
-              y: packet.y,
-              z: packet.z
-            };
-          }
-
-          // 协议里的 yaw/pitch 是角度, 这里统一存成弧度(与 mineflayer 的 bot.entity 一致)
-          if (packet && Number.isFinite(packet.yaw)) {
-            this.lastKnownYaw = packet.yaw * (Math.PI / 180);
-          }
-          if (packet && Number.isFinite(packet.pitch)) {
-            this.lastKnownPitch = packet.pitch * (Math.PI / 180);
-          }
-        });
+        this.attachLightweightPositionTracking(bot);
 
         // 服务器按客户端回报速率(chunk_batch_received)推送区块; 轻量 bot 不加载区块,
         // 回最低速率让服务器尽量少推。注意完整模式由 blocks 插件回包, 仅轻量模式注册避免双写。
