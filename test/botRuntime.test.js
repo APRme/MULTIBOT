@@ -3261,3 +3261,35 @@ test('BotRuntime lightweight mode acknowledges server teleports', () => {
   runtime.autoEatController.detach();
   runtime.treeFarmFeature.detach();
 });
+
+test('BotRuntime lightweight rotation round-trips (eat must not turn the bot)', () => {
+  const runtime = createRuntime({
+    config: {
+      legacyConfig: makeLegacyConfig({ entityHandling: false, terrainHandling: false })
+    }
+  });
+
+  const client = new EventEmitter();
+  client.write = () => {};
+  const bot = new EventEmitter();
+  bot._client = client;
+  bot.version = '1.21.11';
+
+  runtime.attachLightweightPositionTracking(bot);
+
+  // 服务端下发的朝向是 notchian 角度
+  client.emit('position', { x: 0, y: 64, z: 0, yaw: 90, pitch: 45, flags: 0, teleportId: 7 });
+
+  // 存储必须与 mineflayer 的 bot.entity 约定一致
+  assert.ok(Math.abs(runtime.lastKnownYaw - (Math.PI - Math.PI / 2)) < 1e-9, 'yaw 应存成 PI - 90deg');
+  assert.ok(Math.abs(runtime.lastKnownPitch - (-Math.PI / 4)) < 1e-9, 'pitch 应存成 -45deg');
+
+  // 进食时注入 use_item.rotation 必须原样回到 notchian 角度(否则服务端会把视角转过去)
+  const rotation = runtime.eatFeature.resolveUseItemRotation();
+  assert.ok(Math.abs(rotation.y - 90) < 0.01, `yaw 应回到 90, 实际 ${rotation.y}`);
+  assert.ok(Math.abs(rotation.x - 45) < 0.01, `pitch 应回到 45, 实际 ${rotation.x}`);
+
+  runtime.eatFeature.detach();
+  runtime.autoEatController.detach();
+  runtime.treeFarmFeature.detach();
+});

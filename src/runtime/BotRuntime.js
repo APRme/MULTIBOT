@@ -1640,10 +1640,10 @@ class BotRuntime {
 
       // 协议里的 yaw/pitch 是角度, 这里统一存成弧度(与 mineflayer 的 bot.entity 一致)
       if (packet && Number.isFinite(packet.yaw)) {
-        this.lastKnownYaw = packet.yaw * (Math.PI / 180);
+        this.lastKnownYaw = Math.PI - packet.yaw * (Math.PI / 180);
       }
       if (packet && Number.isFinite(packet.pitch)) {
-        this.lastKnownPitch = packet.pitch * (Math.PI / 180);
+        this.lastKnownPitch = -(packet.pitch * (Math.PI / 180));
       }
     });
   }
