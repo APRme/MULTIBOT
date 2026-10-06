@@ -1579,7 +1579,7 @@ class BotRuntime {
       return;
     }
 
-    this.logger.info(`[BOT] chunk batch reply armed chunksPerTick=${chunksPerTick} (lightweight)`);
+//     this.logger.info(`[BOT] chunk batch reply armed chunksPerTick=${chunksPerTick} (lightweight)`);
 
     this.addRuntimeListener(client, 'chunk_batch_finished', () => {
       client.write('chunk_batch_received', {
@@ -1623,7 +1623,7 @@ class BotRuntime {
           bot._client.write('teleport_confirm', { teleportId: packet.teleportId });
           if (!this.lightweightTeleportAckLogged) {
             this.lightweightTeleportAckLogged = true;
-            if (this.logger) this.logger.info('[BOT] 轻量模式已开始确认服务端传送(teleport_confirm)');
+//             if (this.logger) this.logger.info('[BOT] 轻量模式已开始确认服务端传送(teleport_confirm)');
           }
         } catch (error) {
           if (this.logger) this.logger.warn(`[BOT] 轻量模式确认传送失败: ${error.message}`);
@@ -1666,7 +1666,7 @@ class BotRuntime {
     this.eatFeature.attach(bot);
     // 轻量模式也支持进食与自动进食(靠轻量背包核心的窗口点击 + 自建 use_item)
     this.autoEatController.attach(bot);
-    this.logCapabilitySkip('movement/block-container', 'because lightweight mode (no entity/terrain)');
+//     this.logCapabilitySkip('movement/block-container', 'because lightweight mode (no entity/terrain)');
   }
 
   refreshWorldColumnDiagnostics() {

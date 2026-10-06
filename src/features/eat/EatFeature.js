@@ -1,5 +1,12 @@
+// 原版 alwaysEdible(满饱食度也能吃/喝)的物品与可饮用液体; 它们不受"饱食度已满就拒绝"的限制。
 const EXTRA_EDIBLE_ITEM_IDS = new Set([
-  'ominous_bottle'
+  'ominous_bottle',
+  'golden_apple',
+  'enchanted_golden_apple',
+  'honey_bottle',
+  'milk_bucket',
+  'potion',
+  'chorus_fruit'
 ]);
 
 const MANUAL_CONSUME_TIMEOUT = 2500;

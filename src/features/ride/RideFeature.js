@@ -466,7 +466,7 @@ class RideFeature {
 
     this.lightweightIndex = index;
     if (this.logger) {
-      this.logger.info('[RIDE] 轻量骑乘已就绪(仅索引矿车/船; 命令: ride | ride <uuid>)');
+//       this.logger.info('[RIDE] 轻量骑乘已就绪(仅索引矿车/船; 命令: ride | ride <uuid>)');
     }
 
     this.addListener(client, 'set_passengers', (packet) => {

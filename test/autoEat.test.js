@@ -349,3 +349,43 @@ test('autoEat: 关闭状态不动作, autoeat on/off/status 命令可用', async
   assert.match(context.errors.join('\n'), /用法: autoeat on\|off\|status/);
   harness.controller.detach();
 });
+
+test('满饱食度下白名单物品仍可食用(附魔金苹果/金苹果/蜂蜜瓶/牛奶/药水/紫颂果)', async () => {
+  const whitelist = [
+    'enchanted_golden_apple',
+    'golden_apple',
+    'honey_bottle',
+    'milk_bucket',
+    'potion',
+    'chorus_fruit',
+    'ominous_bottle'
+  ];
+
+  for (const item of whitelist) {
+    const harness = createLightweightHarness({ food: 20 });
+    const context = createContext();
+    harness.slots[36] = { name: item, type: 9, count: 1, slot: 36 };
+    harness.bot.heldItem = harness.slots[36];
+
+    await harness.feature.handleEatCommand(context, item);
+
+    assert.deepEqual(context.errors, [], `${item} 在满饱食度下不应被拒绝`);
+    assert.equal(
+      harness.writes.filter((entry) => entry.name === 'use_item').length,
+      1,
+      `${item} 应发出 use_item 实际食用`
+    );
+  }
+});
+
+test('白名单外的非食物物品仍然不可食用(回归)', async () => {
+  const harness = createLightweightHarness({ food: 20 });
+  const context = createContext();
+  harness.slots[36] = { name: 'stone', type: 1, count: 1, slot: 36 };
+  harness.bot.heldItem = harness.slots[36];
+
+  await harness.feature.handleEatCommand(context, 'stone');
+
+  assert.match(context.errors.join('\n'), /不可食用/);
+  assert.equal(harness.writes.filter((entry) => entry.name === 'use_item').length, 0);
+});

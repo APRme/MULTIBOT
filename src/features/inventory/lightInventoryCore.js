@@ -432,7 +432,7 @@ function attachLightInventory(bot, hooks = {}) {
   bot.setQuickBarSlot = setQuickBarSlot;
   bot.updateHeldItem = updateHeldItem;
 
-  log('[BOT] lightweight inventory core attached (zero entity dependency)');
+//   log('[BOT] lightweight inventory core attached (zero entity dependency)');
 
   return {
     getStateId: (windowId) => getStateId(Number.isInteger(windowId) ? windowId : 0)

@@ -81,7 +81,7 @@ class TeleportFeature {
     this.whitelistLoadedAt = getTimestamp();
 
     if (this.logger) {
-      this.logger.info(`[TPA] whitelist refreshed count=${this.whitelistEntries.length}`);
+//       this.logger.info(`[TPA] whitelist refreshed count=${this.whitelistEntries.length}`);
     }
 
     return this.getWhitelistInfo();

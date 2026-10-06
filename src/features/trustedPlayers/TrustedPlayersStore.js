@@ -74,9 +74,9 @@ class TrustedPlayersStore {
     this.loadedAt = getTimestamp();
 
     if (this.logger && this.getTrustedPlayersFilePath()) {
-      this.logger.info(
+      /* this.logger.info(
         `[TRUSTED] players refreshed total=${this.entries.length} static=${mergePlayerLists(this.staticTrustedPlayers).length} file=${mergePlayerLists(this.fileTrustedPlayers).length} mergeParent=${this.mergeParentTrustedPlayers ? 'true' : 'false'}`
-      );
+      ); */
     }
 
     return this.getInfo();
