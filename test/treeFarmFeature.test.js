@@ -186,3 +186,51 @@ test('定时器按每 2 游戏刻(100ms)触发', async () => {
   assert.equal(TICK_INTERVAL_MS, 100, '默认每 2 游戏刻一次');
   harness.feature.stop();
 });
+
+// 距离告警必须与服务端源码规则一致: 眼睛 -> 整格 AABB 最近点 < 4.5+1.0(=5.5, 创造 6.0)
+function createReachHarness(options = {}) {
+  const harness = createHarness();
+  const feetY = TARGET.y + 0.5 - 1.62;
+  harness.bot.game = { gameMode: options.gameMode || 'survival' };
+  harness.bot.entity = {
+    position: {
+      x: TARGET.x - (options.closestDistance || 5.4),
+      y: feetY,
+      z: TARGET.z + 0.5,
+      offset(dx, dy, dz) {
+        return { x: this.x + dx, y: this.y + dy, z: this.z + dz };
+      }
+    },
+    eyeHeight: 1.62
+  };
+  return harness;
+}
+
+test('reach warning follows the server-side rule (closest point vs 4.5+1.0)', () => {
+  const near = createReachHarness({ closestDistance: 5.4 });
+  const nearContext = createContext();
+  near.feature.handleTreeFarmCommand(nearContext, ['start', String(TARGET.x), String(TARGET.y), String(TARGET.z)]);
+  assert.doesNotMatch(nearContext.info.join('\n'), /超过服务端上限/, '最近点 5.4 < 5.5 不应告警');
+  near.feature.stop();
+
+  const far = createReachHarness({ closestDistance: 5.6 });
+  const farContext = createContext();
+  far.feature.handleTreeFarmCommand(farContext, ['start', String(TARGET.x), String(TARGET.y), String(TARGET.z)]);
+  assert.match(farContext.info.join('\n'), /服务端上限 5.5/, '最近点 5.6 应告警并说明上限 5.5');
+  far.feature.stop();
+
+  const creative = createReachHarness({ closestDistance: 5.6, gameMode: 'creative' });
+  const creativeContext = createContext();
+  creative.feature.handleTreeFarmCommand(creativeContext, ['start', String(TARGET.x), String(TARGET.y), String(TARGET.z)]);
+  assert.doesNotMatch(creativeContext.info.join('\n'), /超过服务端上限/, '创造上限 6.0, 5.6 不应告警');
+  creative.feature.stop();
+});
+
+test('reach warning does not use the distance to the block center (old false positive)', () => {
+  // 最近点 5.4(< 5.5, 可用) 但到方块中心 5.9(> 4.5, 旧逻辑会误报)
+  const harness = createReachHarness({ closestDistance: 5.4 });
+  const context = createContext();
+  harness.feature.handleTreeFarmCommand(context, ['start', String(TARGET.x), String(TARGET.y), String(TARGET.z)]);
+  assert.doesNotMatch(context.info.join('\n'), /注意:/, '不得再按中心距离误报');
+  harness.feature.stop();
+});

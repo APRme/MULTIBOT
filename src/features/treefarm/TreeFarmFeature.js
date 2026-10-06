@@ -9,6 +9,13 @@ const { Vec3 } = require('vec3');
 //      上方那一格的状态决定;
 //   3) 目标格上方是树苗时用主手(骨粉)催熟; 否则用副手(树苗)种下;
 //   4) 服务端判定只用包里的 location, direction/cursor 不严格, 这里仍按真实客户端形态填。
+//
+// 距离判定(读 26.2 服务端源码核实): ServerGamePacketListenerImpl#handleUseItemOn 会调用
+//   player.isWithinBlockInteractionRange(pos, 1.0)
+// 度量 = 眼睛位置 -> 目标方块"整格 1x1x1 AABB"的最近点(不是方块真实形状, 也不是中心),
+// 阈值 = BLOCK_INTERACTION_RANGE(生存 4.5) + 1.0 = 5.5(严格小于); 创造属性 +0.5 => 6.0。
+// 另有第二道门: |cursor - (pos+0.5,0.5,0.5)| 逐轴 < 1.0000001, 所以 (0.5,1.0,0.5) 点顶面合法。
+// 还有一道非距离的门: 服务端有未确认的传送(awaitingPositionFromClient)时不执行交互, 靠持续重试自愈。
 const TICK_INTERVAL_MS = 100; // 每 2 游戏刻一次
 const SAPLING_NAME_PATTERN = /_sapling$/;
 const SOIL_BLOCK_NAMES = new Set([
@@ -172,14 +179,41 @@ class TreeFarmFeature {
     return true;
   }
 
-  describeReachWarning() {
-    const position = this.bot && this.bot.entity ? this.bot.entity.position : null;
-    if (!position || !this.target) return '';
+  // 服务端上限: 4.5 + 1.0 = 5.5(生存), 创造 5.0 + 1.0 = 6.0
+  resolveInteractionLimit() {
+    const mode = this.bot && this.bot.game ? this.bot.game.gameMode : 'survival';
+    return mode === 'creative' ? 6 : 5.5;
+  }
 
-    const center = this.target.offset(0.5, 0.5, 0.5);
-    const distance = position.distanceTo(center);
-    if (distance <= 4.5) return '';
-    return `; 注意: 当前距离约 ${distance.toFixed(2)} 格, 超过 4.5 格时服务端会忽略交互`;
+  // 眼睛位置(无插值): 脚部位置 + eyeHeight(站立 1.62, 潜行 1.27, 游泳 0.4)
+  resolveEyePosition() {
+    const entity = this.bot && this.bot.entity;
+    if (!entity || !entity.position) return null;
+    const eyeHeight = Number.isFinite(entity.eyeHeight) ? entity.eyeHeight : 1.62;
+    return entity.position.offset(0, eyeHeight, 0);
+  }
+
+  // 点到"整格 1x1x1 立方体"的最近点距离(与 AABB#distanceToSqr 同构)
+  distanceToBlockCube(eye, position) {
+    const dx = Math.max(Math.max(position.x - eye.x, eye.x - (position.x + 1)), 0);
+    const dy = Math.max(Math.max(position.y - eye.y, eye.y - (position.y + 1)), 0);
+    const dz = Math.max(Math.max(position.z - eye.z, eye.z - (position.z + 1)), 0);
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  describeReachWarning() {
+    const eye = this.resolveEyePosition();
+    if (!eye || !this.target || !this.above) return '';
+
+    // 种下时点土块, 催熟时点上方那一格: 任一格够得到就不算超距
+    const reachable = Math.min(
+      this.distanceToBlockCube(eye, this.target),
+      this.distanceToBlockCube(eye, this.above)
+    );
+    const limit = this.resolveInteractionLimit();
+    if (reachable < limit) return '';
+
+    return `; 注意: 眼睛到目标格最近点约 ${reachable.toFixed(2)} 格, 已达/超过服务端上限 ${limit} 格(交互距离 4.5 + 1.0 缓冲), 交互会被忽略`;
   }
 
   // ---------- 每 2 游戏刻一次的动作 ----------
