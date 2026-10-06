@@ -135,6 +135,9 @@ function normalizeTeleportPromptMatcherList(value, label, options = {}) {
     if (options.requireSender === true && !source.includes('(?<sender>')) {
       throw new Error(`${label}[${index}] must include a named sender capture`);
     }
+    if (options.requireContent === true && !source.includes('(?<content>')) {
+      throw new Error(`${label}[${index}] must include a named content capture`);
+    }
 
     try {
       new RegExp(source, 'i');
@@ -165,6 +168,46 @@ function normalizeTeleportPromptMatchers(value) {
       'server.teleportPromptMatchers.tpahere',
       { requireSender: true }
     )
+  };
+}
+
+// 私聊格式匹配(插件服自定义私聊行): 与 teleportPromptMatchers 同构, 只允许写在 server.json
+function normalizeWhisperMatchers(value) {
+  if (value !== undefined && !isPlainObject(value)) {
+    throw new Error('server.whisperMatchers must be an object');
+  }
+  const source = isPlainObject(value) ? value : {};
+  return {
+    incoming: normalizeTeleportPromptMatcherList(
+      source.incoming,
+      'server.whisperMatchers.incoming',
+      { requireSender: true, requireContent: true }
+    )
+  };
+}
+
+const WHISPER_COMMAND_MAX_LENGTH = 64;
+
+function normalizeWhisperCommand(value, label, fallbackValue) {
+  if (value === undefined) return fallbackValue;
+  if (typeof value !== 'string') {
+    throw new Error(`${label} must be a string`);
+  }
+  const source = value.trim();
+  if (!source || source.length > WHISPER_COMMAND_MAX_LENGTH || !source.startsWith('/') || /\s/.test(source)) {
+    throw new Error(`${label} must be a single command token that starts with "/" (up to 64 characters)`);
+  }
+  return source;
+}
+
+function normalizeWhisperCommands(value) {
+  if (value !== undefined && !isPlainObject(value)) {
+    throw new Error('server.whisperCommands must be an object');
+  }
+  const source = isPlainObject(value) ? value : {};
+  return {
+    reply: normalizeWhisperCommand(source.reply, 'server.whisperCommands.reply', '/minecraft:w'),
+    error: normalizeWhisperCommand(source.error, 'server.whisperCommands.error', '/tell')
   };
 }
 
@@ -495,6 +538,8 @@ function buildBotConfig(options = {}) {
     paths,
     legacyConfig,
     teleportPromptMatchers,
+    whisperMatchers,
+    whisperCommands,
     openAuth,
     serverDirName,
     botDirName
@@ -534,6 +579,8 @@ function buildBotConfig(options = {}) {
       : options.restartDelayScheduleMs,
     restartDelayScheduleRepeatLast: options.restartDelayScheduleRepeatLast !== false,
     teleportPromptMatchers: normalizeTeleportPromptMatchers(teleportPromptMatchers),
+    whisperMatchers: normalizeWhisperMatchers(whisperMatchers),
+    whisperCommands: normalizeWhisperCommands(whisperCommands),
     openAuth: isPlainObject(openAuth)
       ? {
         enabled: openAuth.enabled === true,
@@ -596,6 +643,8 @@ function loadExplicitBots(options = {}) {
         inheritedConfigPath: paths.defaultLegacyConfigPath
       }),
       teleportPromptMatchers: serverConfig.teleportPromptMatchers,
+      whisperMatchers: serverConfig.whisperMatchers,
+      whisperCommands: serverConfig.whisperCommands,
       openAuth,
       restartDelayScheduleMs: restartSchedule.restartDelayScheduleMs,
       restartDelayScheduleRepeatLast: restartSchedule.restartDelayScheduleRepeatLast,
@@ -661,6 +710,8 @@ function discoverBots(options = {}) {
         paths,
         legacyConfig,
         teleportPromptMatchers: serverConfig.teleportPromptMatchers,
+        whisperMatchers: serverConfig.whisperMatchers,
+        whisperCommands: serverConfig.whisperCommands,
         openAuth,
         restartDelayScheduleMs: restartSchedule.restartDelayScheduleMs,
         restartDelayScheduleRepeatLast: restartSchedule.restartDelayScheduleRepeatLast,
@@ -706,6 +757,8 @@ function buildDiscoveredBotConfig(options = {}) {
     paths,
     legacyConfig,
     teleportPromptMatchers: serverConfig.teleportPromptMatchers,
+    whisperMatchers: serverConfig.whisperMatchers,
+    whisperCommands: serverConfig.whisperCommands,
     openAuth,
     restartDelayScheduleMs: restartSchedule.restartDelayScheduleMs,
     restartDelayScheduleRepeatLast: restartSchedule.restartDelayScheduleRepeatLast,
@@ -793,6 +846,8 @@ module.exports = {
   NOTIFICATION_EVENT_SPECS,
   normalizeAllowedOrigins,
   normalizeTeleportPromptMatchers,
+  normalizeWhisperMatchers,
+  normalizeWhisperCommands,
   normalizeOpenAuthConfig,
   normalizeRestartDelaySchedule,
   normalizeRestartDelayScheduleRepeatLast,

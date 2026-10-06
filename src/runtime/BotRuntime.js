@@ -625,6 +625,7 @@ class BotRuntime {
       chatConsoleCoordinator: this.chatConsoleCoordinator,
       teleportFeature: this.teleportFeature,
       teleportPromptMatchers: this.config.teleportPromptMatchers,
+      whisperMatchers: this.config.whisperMatchers,
       trustedPlayers: this.config.legacyConfig.trustedPlayers,
       trustedPlayersStore: this.trustedPlayersStore,
       activityLogFeature: this.activityLogFeature
@@ -1182,7 +1183,11 @@ class BotRuntime {
         if (source === 'whisper' && sender && this.bot) {
           // 私聊回复使用 /minecraft:w（插件服中 /w 常被插件命令占用，
           // 命名空间命令强制走原版私聊；本地原版服不支持属环境差异）
-          const command = entry.mode === 'whisper' ? '/minecraft:w' : '/tell';
+          // 私聊回复命令可经 server.json 的 whisperCommands 覆盖(插件服可能改掉 /minecraft:w)
+          const whisperCommands = this.config.whisperCommands || {};
+          const command = entry.mode === 'whisper'
+            ? (whisperCommands.reply || '/minecraft:w')
+            : (whisperCommands.error || '/tell');
           this.bot.chat(`${command} ${sender} ${entry.message}`);
         }
 

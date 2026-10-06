@@ -640,6 +640,37 @@ client timed out after 30000 milliseconds
 - 每组最多 20 条规则，每条最多 500 个字符；非法正则会阻止配置加载并指出具体位置。
 - 该配置只允许放在 `server.json`，不从 `default.config.json` 或单 bot `config.json` 读取。
 
+#### 私聊格式匹配
+
+不同服务端/插件会改写私聊行的格式（例如 `[playerName → 我] 内容`）。可在 `server.json` 的 `whisperMatchers.incoming` 中追加匹配规则，写法和约束与 `teleportPromptMatchers` 一致：
+
+```json
+{
+  "whisperMatchers": {
+    "incoming": [
+      "^\\[(?<sender>[A-Za-z0-9_]{1,16}) → 我\\]\\s*(?<content>.*)$"
+    ]
+  }
+}
+```
+
+- 内置的原版形态（`<名字> whispers to you: 内容` 与 `%s whispers to you: %s`）**始终生效**，自定义规则只在它们不匹配时启用。
+- 每条规则必须 `^` 开头、`$` 结尾，必须包含命名捕获组 `(?<sender>...)` 与 `(?<content>...)`；每组最多 20 条、每条最多 500 字符，非法正则会阻止配置加载并指出具体位置。
+- **务必保持整行锚定，并把接收者等固定文字写进规则**：消息在匹配前会剥离 `§` 颜色码，但公屏内容的前缀（如 `[生存]  playerName » `）不会被剥离；一旦规则放宽，公屏上伪造一条结构相同的消息就会让 bot 当成私聊处理。
+- 即使某行被判定为私聊，也只有 `trustedPlayers` 名单内的玩家才会被当作命令执行。
+- 该配置只允许放在 `server.json`，不从 `default.config.json` 或单 bot `config.json` 读取。
+
+bot 回复私聊默认使用 `/minecraft:w`（成功回复）与 `/tell`（错误回复）。若服务端改掉了这两个命令，可在 `server.json` 中用 `whisperCommands` 覆盖（必须是单个以 `/` 开头的命令 token）：
+
+```json
+{
+  "whisperCommands": {
+    "reply": "/minecraft:w",
+    "error": "/tell"
+  }
+}
+```
+
 例如 `Somebody: Player 请求传送到你的位置`、`[聊天] Player 想要传送到你这里` 都不会命中内置规则，因为消息开头包含额外内容。
 
 ### 3.4 ViaProxy/OpenAuth（26.1.2）

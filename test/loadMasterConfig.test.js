@@ -14,6 +14,7 @@ const {
   NOTIFICATION_EVENT_SPECS,
   buildDiscoveredBotConfig
 } = require('../src/config/loadMasterConfig');
+const { normalizeWhisperMatchers, normalizeWhisperCommands } = require('../src/config/loadMasterConfig');
 const { EVENT_COOLDOWN_DEFAULTS } = require('../src/notifications/bark/BarkNotifier');
 
 test('loadMasterConfig resolves MULTIBOT sessions dir', () => {
@@ -1390,3 +1391,33 @@ test('notification event cooldown defaults stay in sync with BarkNotifier', () =
   });
 });
 
+
+// ===== 私聊格式可配: 配置校验 =====
+test('normalizeWhisperMatchers validates custom whisper rules strictly', () => {
+  assert.deepEqual(normalizeWhisperMatchers(undefined), { incoming: [] });
+  assert.equal(
+    normalizeWhisperMatchers({
+      incoming: ['^\\[(?<sender>[A-Za-z0-9_]{1,16}) → 我\\]\\s*(?<content>.*)$']
+    }).incoming.length,
+    1
+  );
+
+  assert.throws(() => normalizeWhisperMatchers([]), /server\.whisperMatchers must be an object/);
+  assert.throws(() => normalizeWhisperMatchers({ incoming: 'x' }), /must be an array/);
+  assert.throws(() => normalizeWhisperMatchers({ incoming: ['(?<sender>a) (?<content>b)'] }), /must be anchored with \^ and \$/);
+  assert.throws(() => normalizeWhisperMatchers({ incoming: ['^(?<content>b)$'] }), /named sender capture/);
+  assert.throws(() => normalizeWhisperMatchers({ incoming: ['^(?<sender>a)$'] }), /named content capture/);
+  assert.throws(() => normalizeWhisperMatchers({ incoming: ['^(?<sender>[a)(?<content>b)$'] }), /is invalid/);
+  assert.throws(
+    () => normalizeWhisperMatchers({ incoming: new Array(21).fill('^(?<sender>a)(?<content>b)$') }),
+    /at most 20 rules/
+  );
+});
+
+test('normalizeWhisperCommands keeps the defaults and validates overrides', () => {
+  assert.deepEqual(normalizeWhisperCommands(undefined), { reply: '/minecraft:w', error: '/tell' });
+  assert.deepEqual(normalizeWhisperCommands({ reply: '/msg' }), { reply: '/msg', error: '/tell' });
+  assert.throws(() => normalizeWhisperCommands({ reply: 'msg' }), /must be a single command token/);
+  assert.throws(() => normalizeWhisperCommands({ reply: '/msg me' }), /must be a single command token/);
+  assert.throws(() => normalizeWhisperCommands({ error: 5 }), /must be a string/);
+});

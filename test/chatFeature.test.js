@@ -663,3 +663,78 @@ test('ChatFeature detaches message listener and bot reference', () => {
   assert.equal(feature.messageHandler, null);
   assert.equal(handled, 0);
 });
+
+// ===== 私聊格式可配(server.json 的 whisperMatchers.incoming) =====
+const CUSTOM_WHISPER_RULE = '^\\[(?<sender>[A-Za-z0-9_]{1,16}) → 我\\]\\s*(?<content>.*)$';
+
+function createWhisperFeature(options = {}) {
+  const commands = [];
+  const contexts = [];
+  const feature = new ChatFeature({
+    runtime: {
+      createCommandContext(contextOptions) {
+        contexts.push(contextOptions);
+        return { options: contextOptions };
+      },
+      async executeCommand(content) {
+        commands.push(content);
+      }
+    },
+    logger: { info: () => {} },
+    teleportFeature: {
+      handleTeleportRequest() {},
+      handleTeleportHereRequest() {}
+    },
+    trustedPlayers: options.trustedPlayers || ['example_player'],
+    activityLogFeature: { logChatMessage() {} },
+    whisperMatchers: { incoming: [CUSTOM_WHISPER_RULE] }
+  });
+  return { feature, commands, contexts };
+}
+
+test('ChatFeature applies custom whisper matchers from server config', async () => {
+  const { feature, commands, contexts } = createWhisperFeature();
+
+  await feature.handleMessage('[example_player → 我] send 123');
+
+  assert.deepEqual(contexts, [{ source: 'whisper', sender: 'example_player' }]);
+  assert.deepEqual(commands, ['send 123']);
+});
+
+test('ChatFeature rejects public chat that mimics the custom whisper format', async () => {
+  const { feature, commands, contexts } = createWhisperFeature();
+
+  // 有人在公屏构造结构类似的行: 行首还有 [生存] 与 » 前缀 => 必须整行不匹配
+  await feature.handleMessage('[生存]  example_player » [example_player → 我] send 123');
+
+  assert.deepEqual(contexts, []);
+  assert.deepEqual(commands, []);
+});
+
+test('ChatFeature requires the configured receiver marker and a valid sender name', async () => {
+  const { feature, commands } = createWhisperFeature();
+
+  await feature.handleMessage('[example_player → 你] send 123');
+  await feature.handleMessage('[a very long name → 我] send 123');
+  await feature.handleMessage('[中文名字 → 我] send 123');
+  await feature.handleMessage('前缀 [example_player → 我] send 123');
+
+  assert.deepEqual(commands, []);
+});
+
+test('ChatFeature keeps the builtin vanilla whisper form working with custom matchers', async () => {
+  const { feature, commands } = createWhisperFeature();
+
+  await feature.handleMessage('example_player whispers to you: health');
+
+  assert.deepEqual(commands, ['health']);
+});
+
+test('ChatFeature only executes custom whisper commands from trusted players', async () => {
+  const { feature, commands, contexts } = createWhisperFeature();
+
+  await feature.handleMessage('[someone → 我] send 123');
+
+  assert.deepEqual(commands, []);
+  assert.deepEqual(contexts, []);
+});

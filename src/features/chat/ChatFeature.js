@@ -252,6 +252,27 @@ const BUILTIN_TELEPORT_PROMPT_MATCHERS = {
   ]
 };
 
+// 服务端自定义私聊格式(server.json 的 whisperMatchers.incoming):
+// 只在内置原版形态不匹配时启用; 规则必须由配置方自行全行锚定, 否则公屏内容可能被误判为私聊。
+function compileWhisperMatchers(config = {}) {
+  const rules = Array.isArray(config && config.incoming) ? config.incoming : [];
+  return rules.map((source) => new RegExp(`^(?:${source})$`, 'i'));
+}
+
+function matchWhisperMatchers(plainText, matchers) {
+  const text = String(plainText || '');
+  for (const matcher of matchers) {
+    const match = text.match(matcher);
+    if (!match) continue;
+    const groups = match.groups || {};
+    const sender = String(groups.sender || '').trim();
+    const content = String(groups.content === undefined ? '' : groups.content).trim();
+    if (!sender) continue;
+    return { sender, content };
+  }
+  return null;
+}
+
 function compileTeleportPromptMatchers(config = {}) {
   const compileList = (key) => [
     ...BUILTIN_TELEPORT_PROMPT_MATCHERS[key],
@@ -302,6 +323,7 @@ class ChatFeature {
     this.chatConsoleCoordinator = options.chatConsoleCoordinator || null;
     this.teleportFeature = options.teleportFeature;
     this.teleportPromptMatchers = compileTeleportPromptMatchers(options.teleportPromptMatchers);
+    this.whisperMatchers = compileWhisperMatchers(options.whisperMatchers);
     this.trustedPlayers = Array.isArray(options.trustedPlayers) ? options.trustedPlayers : [];
     this.trustedPlayersStore = options.trustedPlayersStore || null;
     this.activityLogFeature = options.activityLogFeature || null;
@@ -406,10 +428,13 @@ class ChatFeature {
       this.activityLogFeature.logChatMessage(displayText);
     }
 
-    const whisperMatch = plainText.match(/^(.+?) whispers to you:\s*(.*)$/);
-    if (whisperMatch) {
-      const sender = whisperMatch[1].trim();
-      const content = whisperMatch[2].trim();
+    const builtinWhisperMatch = plainText.match(/^(.+?) whispers to you:\s*(.*)$/);
+    const whisper = builtinWhisperMatch
+      ? { sender: builtinWhisperMatch[1].trim(), content: builtinWhisperMatch[2].trim() }
+      : matchWhisperMatchers(plainText, this.whisperMatchers);
+    if (whisper) {
+      const sender = whisper.sender;
+      const content = whisper.content;
 
       if (this.isTrustedPlayer(sender)) {
         const context = this.runtime.createCommandContext({
