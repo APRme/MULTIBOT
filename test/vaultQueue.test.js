@@ -21,7 +21,15 @@ function createLead(options = {}) {
     chat: (message) => calls.push(message)
   };
 
-  const feature = new VaultFeature({ logger: null, getSequence: () => 1 });
+  const feature = new VaultFeature({
+    logger: null,
+    getSequence: () => 1,
+    getCapabilities: () => (options.capabilities || {
+      entityHandling: true,
+      terrainHandling: true,
+      inventoryHandling: true
+    })
+  });
   feature.bot = bot;
   feature.impl = options.impl === undefined
     ? {
@@ -37,11 +45,21 @@ function createLead(options = {}) {
   return { feature, bot, calls };
 }
 
-test('轻量模式(无遗留模块)拒绝 vaultqueue', async () => {
+test('完整模式但未加载遗留模块时给出明确提示', async () => {
   const { feature } = createLead({ impl: null });
   const context = createContext();
   await feature.runQueue(context, ['B1']);
-  assert.match(context.text, /只能在完整模式/);
+  assert.match(context.text, /没有加载宝库模块/);
+});
+
+test('非完整模式时拒绝并回显当前能力', async () => {
+  const { feature } = createLead({
+    capabilities: { entityHandling: false, terrainHandling: false, inventoryHandling: true }
+  });
+  const context = createContext();
+  await feature.runQueue(context, ['B1']);
+  assert.match(context.text, /需要完整模式/);
+  assert.match(context.text, /entity=off terrain=off/);
 });
 
 test('没有目标时报用法', async () => {
@@ -131,4 +149,21 @@ test('stop() 会取消队列并清空遗留模块', async () => {
   assert.equal(feature.queueRunning, false);
   assert.equal(feature.impl, null);
   assert.equal(feature.bot, null);
+});
+
+test('--at=x,y,z 时跳过寻路, 直接使用给定坐标', async () => {
+  const calls = [];
+  const { feature, calls: chatCalls } = createLead({
+    impl: {
+      openNearestVault: async () => { calls.push('openNearestVault'); return { success: false, message: '不应被调用' }; },
+      cleanupTrial: () => {}
+    }
+  });
+  const context = createContext();
+
+  await feature.runQueue(context, ['--settle=5', '--delay=5', '--at=10,20,30', '--no-back', 'A']);
+
+  assert.deepEqual(calls, [], '不应调用 openNearestVault');
+  assert.deepEqual(chatCalls, ['/tpahere A', '/minecraft:w A vault 10 20 30']);
+  assert.match(context.text, /使用指定宝库坐标 \(10, 20, 30\)/);
 });

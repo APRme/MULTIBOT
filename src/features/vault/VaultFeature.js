@@ -35,6 +35,7 @@ class VaultFeature {
     this.paths = options.paths || {};
     this.logger = options.logger;
     this.getSequence = typeof options.getSequence === 'function' ? options.getSequence : null;
+    this.getCapabilities = typeof options.getCapabilities === 'function' ? options.getCapabilities : null;
     this.activateTimeoutMs = Number.isFinite(options.activateTimeoutMs)
       ? Math.max(50, Math.trunc(options.activateTimeoutMs))
       : DEFAULT_ACTIVATE_TIMEOUT_MS;
@@ -56,11 +57,22 @@ class VaultFeature {
     );
   }
 
+  // 按运行时能力开关判定是否完整模式; 没有注入能力时退回探测 bot 方法。
+  // 注意: 探测 bot.blockAt/findBlock 不可靠(插件可能延迟装配), 能力开关才是权威。
+  isFullMode() {
+    if (this.getCapabilities) {
+      const caps = this.getCapabilities() || {};
+      return Boolean(caps.entityHandling) && Boolean(caps.terrainHandling);
+    }
+
+    return this.hasTerrainData(this.bot);
+  }
+
   attach(bot) {
     this.stop();
     this.bot = bot;
 
-    if (!this.hasTerrainData(bot)) {
+    if (!this.isFullMode()) {
       return;
     }
 
@@ -85,7 +97,7 @@ class VaultFeature {
       return;
     }
 
-    if (!this.hasTerrainData()) {
+    if (!this.isFullMode()) {
       context.replyError('轻量模式需要提供宝库坐标: vault <x> <y> <z>');
       return;
     }
@@ -324,7 +336,7 @@ class VaultFeature {
   }
 
   parseQueueArgs(args) {
-    const options = { settleMs: 1200, delayMs: 8000, backAtEnd: true, targets: [] };
+    const options = { settleMs: 1200, delayMs: 8000, backAtEnd: true, targets: [], at: null };
 
     for (const raw of Array.isArray(args) ? args : []) {
       const value = String(raw || '').trim();
@@ -339,6 +351,9 @@ class VaultFeature {
       if (/^--no-back$/i.test(value)) { options.backAtEnd = false; continue; }
       if (/^--back$/i.test(value)) { options.backAtEnd = true; continue; }
 
+      const at = value.match(/^--at=(-?\d+),(-?\d+),(-?\d+)$/i);
+      if (at) { options.at = { x: Number(at[1]), y: Number(at[2]), z: Number(at[3]) }; continue; }
+
       if (/^[A-Za-z0-9_]{1,16}$/.test(value)) options.targets.push(value);
     }
 
@@ -347,8 +362,14 @@ class VaultFeature {
   }
 
   async runQueue(context, args) {
+    if (!this.isFullMode()) {
+      const caps = this.getCapabilities ? this.getCapabilities() || {} : {};
+      context.replyError(`vaultqueue 需要完整模式(地形处理 + 实体处理)的车头, 当前 entity=${caps.entityHandling ? 'on' : 'off'} terrain=${caps.terrainHandling ? 'on' : 'off'}`);
+      return;
+    }
+
     if (!this.impl || typeof this.impl.openNearestVault !== 'function') {
-      context.replyError('vaultqueue 只能在完整模式(有地形/实体数据)的车头上使用');
+      context.replyError('车头没有加载宝库模块(impl 缺失)，请重启该 bot 实例后再试');
       return;
     }
 
@@ -372,13 +393,20 @@ class VaultFeature {
     this.queueCancelled = false;
 
     try {
-      context.replyInfo('宝库队列: 车头先开启最近的宝库 ...');
-      const opened = await this.impl.openNearestVault();
-      const position = opened && opened.position;
+      let position;
 
-      if (!opened || opened.success !== true || !position) {
-        context.replyError(`车头开箱失败: ${(opened && opened.message) || '未知原因'}`);
-        return;
+      if (options.at) {
+        position = { ...options.at };
+        context.replyInfo(`使用指定宝库坐标 (${position.x}, ${position.y}, ${position.z})`);
+      } else {
+        context.replyInfo('宝库队列: 车头先开启最近的宝库 ...');
+        const opened = await this.impl.openNearestVault();
+        position = opened && opened.position;
+
+        if (!opened || opened.success !== true || !position) {
+          context.replyError(`车头开箱失败: ${(opened && opened.message) || '未知原因'}`);
+          return;
+        }
       }
 
       const { x, y, z } = position;

@@ -576,7 +576,8 @@ class BotRuntime {
     this.vaultFeature = new VaultFeature({
       logger: this.logger,
       paths: this.config.paths,
-      getSequence: () => this.nextInteractionSequence()
+      getSequence: () => this.nextInteractionSequence(),
+      getCapabilities: () => this.getCapabilities()
     });
     this.attackFeature = new AttackFeature({
       logger: this.logger,
