@@ -3293,3 +3293,75 @@ test('BotRuntime lightweight rotation round-trips (eat must not turn the bot)', 
   runtime.autoEatController.detach();
   runtime.treeFarmFeature.detach();
 });
+
+test('forceDestroyStaleSockets destroys every tracked leftover socket and clears the set', async () => {
+  const runtime = createRuntime();
+  const make = (name) => {
+    const socket = {
+      destroyed: false,
+      destroy() {
+        socket.destroyed = true;
+      }
+    };
+    return { name, socket };
+  };
+  const a = make('a');
+  const b = make('b');
+  const c = make('c');
+  runtime.staleClients.add(a);
+  runtime.staleClients.add(b);
+  runtime.staleClients.add(c);
+
+  const destroyed = await runtime.forceDestroyStaleSockets();
+
+  assert.equal(destroyed, 3, '应销毁全部 3 条残留 socket, 而不是只清最近一条');
+  assert.equal(a.socket.destroyed, true);
+  assert.equal(b.socket.destroyed, true);
+  assert.equal(c.socket.destroyed, true);
+  assert.equal(runtime.staleClients.size, 0);
+});
+
+test('finalizeEndedBot tracks the ended client for the next cleanup pass', async () => {
+  const runtime = createRuntime();
+  const socket = {
+    destroyed: false,
+    destroy() {
+      socket.destroyed = true;
+    }
+  };
+  const client = { socket };
+  const bot = new EventEmitter();
+  bot._client = client;
+  runtime.bot = bot;
+
+  await runtime.finalizeEndedBot(bot, 'end', { publishStopped: false });
+
+  assert.equal(runtime.staleClients.has(client), true, '结束的连接应进入待清理集合');
+  assert.equal(runtime.bot, null);
+});
+
+test('proxy duplicate-login end sets cooldown and floors the restart delay', async () => {
+  const runtime = createRuntime();
+  const socket = {
+    destroyed: false,
+    destroy() {
+      socket.destroyed = true;
+    }
+  };
+  const client = { socket };
+  const bot = new EventEmitter();
+  bot._client = client;
+  bot.end = () => {};
+  runtime.bot = bot;
+  runtime.desiredRunning = true;
+
+  await runtime.handleEnd(runtime.connectionEpoch, 'You are already connected to this proxy!');
+
+  assert.ok(runtime.proxySessionBusyUntilMs > Date.now(), '代理重复登录应写入冷却截止时间');
+  assert.ok(
+    runtime.pendingRestartDelayMs >= 200000,
+    `冷却期内的重启延迟应被抬高, 实际 ${runtime.pendingRestartDelayMs}`
+  );
+
+  runtime.clearRestartTimer();
+});

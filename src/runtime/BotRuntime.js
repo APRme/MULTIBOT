@@ -51,6 +51,16 @@ const DEFAULT_DESYNC_SILENCE_MS = 8000;
 // 因此无论服务端窗口内容如何, 这个值都被接受(比空集合的 1 更稳)。
 const IGNORED_LAST_SEEN_CHECKSUM = 0;
 
+// 清掉残留 socket 后等待一小段再重连: destroy 只是本机发 FIN, 代理/隧道要先处理完才会释放玩家名,
+// 立刻重连会撞 "already connected to this proxy"。
+const STALE_SOCKET_RELEASE_DELAY_MS = 1000;
+
+// 代理报重复登录后, 该账号至少要等这么久才允许再次登录(代理侧会话释放时间不受我们控制)
+const PROXY_SESSION_BUSY_BACKOFF_MS = 240000;
+
+// Velocity/BungeeCord 的重复登录拒绝文案(玩家名仍被代理占用)
+const PROXY_SESSION_BUSY_PATTERN = /already connected to this proxy|already online|already logged in/i;
+
 // 取该协议版本聊天包的"已读确认窗口"字段(1.21.5+ 才有 acknowledged/checksum)。
 // 返回 { ackBytes, offsetField }: offsetField 是该包里表示 offset 的字段名
 // (chat_message 叫 offset, chat_command_signed 叫 messageCount)。
@@ -452,6 +462,10 @@ class BotRuntime {
     this.desiredRunning = false;
     this.startupWarningTimer = null;
     this.lastClientForCleanup = null;
+    // 所有"已结束但可能没真正关闭"的 client: 单槽会被后续重启覆盖, 用 Set 累积后一次性清理
+    this.staleClients = new Set();
+    // 代理判定重复登录后, 在此时间点之前不再重新登录(让代理释放玩家名)
+    this.proxySessionBusyUntilMs = 0;
     this.startupWarningDelayMs = Number.isFinite(Number(this.config.startupTimeoutMs))
       ? Math.max(1000, Number(this.config.startupTimeoutMs))
       : 30000;
@@ -738,6 +752,8 @@ class BotRuntime {
       return;
     }
     this.clearStartupWarningTimer();
+    // 成功进入游戏说明代理已经释放该账号, 清掉"重复登录"冷却
+    this.proxySessionBusyUntilMs = 0;
     if (this.isOpenAuthEnabled() && !this.openAuthRequestSeen) {
       if (this.pendingRestartReason) return;
       this.stopForOpenAuthFailure('OPENAUTH_REQUEST_MISSING');
@@ -1799,6 +1815,10 @@ class BotRuntime {
       players: countObjectKeys(bot?.players),
       pathfinderLoaded: Boolean(bot?.pathfinder),
       physicsEnabled: bot ? bot.physicsEnabled !== false : null,
+      staleSocketCount: this.staleClients ? this.staleClients.size : 0,
+      proxySessionBusyUntil: this.proxySessionBusyUntilMs > Date.now()
+        ? getTimestamp(new Date(this.proxySessionBusyUntilMs))
+        : null,
       client: client
         ? {
             ended: client.ended === true,
@@ -1858,7 +1878,14 @@ class BotRuntime {
     this.openAuthRequestSeen = false;
     this.openAuthRequestMissingRetryEligible = source === 'scheduled_restart' && this.spawnCount > 0;
     this.openAuthPermanentFailure = false;
-    await this.forceDestroyStaleSockets();
+    const destroyedStaleSockets = await this.forceDestroyStaleSockets();
+    if (destroyedStaleSockets > 0) {
+      // 刚销毁过残留连接: 给代理/隧道一个释放玩家名的时间窗, 否则新连接会被判重复登录
+      this.logger.warn(
+        `[BOT] waiting ${STALE_SOCKET_RELEASE_DELAY_MS}ms for proxy to release name after destroying ${destroyedStaleSockets} leftover socket(s)`
+      );
+      await new Promise((resolve) => setTimeout(resolve, STALE_SOCKET_RELEASE_DELAY_MS));
+    }
 
     this.state = 'starting';
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_START, {
@@ -2215,31 +2242,41 @@ class BotRuntime {
   }
 
   // 强制销毁残留 client 的底层 socket。
-  // 覆盖两类情况:卡在认证/握手阶段从未触发 error/end 的连接,以及 stop 时
-  // quit 失效或 this.bot 已为空导致连接未被关闭的残留。销毁后代理会释放玩家名,
-  // 避免重启时出现 "already connected to this proxy"。
+  // 覆盖三类情况: 卡在认证/握手阶段从未触发 error/end 的连接、stop 时 quit 失效或 this.bot 已为空
+  // 导致连接未被关闭的残留、以及多次 stop/start 循环里被单槽覆盖而丢失的旧 client。
+  // 返回真正被销毁的数量, 供调用方决定是否留出"代理释放玩家名"的等待窗口。
   async forceDestroyStaleSockets() {
-    const currentClient = this.bot && this.bot._client ? this.bot._client : null;
-    const clients = [];
-    if (currentClient) {
-      clients.push(currentClient);
+    const candidates = new Set();
+    if (this.bot && this.bot._client) {
+      candidates.add(this.bot._client);
     }
-    if (this.lastClientForCleanup && this.lastClientForCleanup !== currentClient) {
-      clients.push(this.lastClientForCleanup);
+    if (this.lastClientForCleanup) {
+      candidates.add(this.lastClientForCleanup);
+    }
+    for (const client of this.staleClients) {
+      candidates.add(client);
     }
     this.lastClientForCleanup = null;
+    this.staleClients.clear();
 
-    for (const client of clients) {
+    let destroyed = 0;
+    for (const client of candidates) {
       if (!client || !client.socket || client.socket.destroyed) {
         continue;
       }
       try {
         client.socket.destroy();
+        destroyed += 1;
         this.logger.warn('[BOT] force-destroyed leftover socket during stop');
       } catch (error) {
         this.logger.warn('[BOT] failed to force-destroy leftover socket', error);
       }
     }
+
+    if (destroyed > 1) {
+      this.logger.warn(`[BOT] force-destroyed ${destroyed} leftover sockets`);
+    }
+    return destroyed;
   }
 
   async restart(reason = 'manual_restart') {
@@ -2364,6 +2401,12 @@ class BotRuntime {
     this.detachFeaturesFromBot();
     this.releaseEndedBotLargeCaches(endedBot);
 
+    // 记录这条已结束连接的 client: 下次 start() 统一销毁并留出代理释放玩家名的时间窗,
+    // 避免"幽灵在线"(代理仍认为该账号在线, 新连接被判重复登录)。
+    if (endedBot && endedBot._client) {
+      this.staleClients.add(endedBot._client);
+    }
+
     if (this.bot === endedBot) {
       this.bot = null;
     }
@@ -2424,6 +2467,13 @@ class BotRuntime {
     const endReasonText = this.describeEndReason(endReason);
     const endContext = this.describeEndContext();
     this.lastEndReason = endReasonText;
+    if (PROXY_SESSION_BUSY_PATTERN.test(endReasonText)) {
+      // 代理仍认为该账号在线(上一次会话没被代理清掉): 记冷却, 期间不再重连
+      this.proxySessionBusyUntilMs = Date.now() + PROXY_SESSION_BUSY_BACKOFF_MS;
+      this.logger.warn(
+        `[BOT] proxy reports duplicate login, cooldown ${PROXY_SESSION_BUSY_BACKOFF_MS}ms before relogin`
+      );
+    }
     this.lastEndAt = endedAt;
     this.diagnostics.currentConnectionEndedAt = endedAt;
     const endedBot = this.bot;
@@ -2862,15 +2912,21 @@ class BotRuntime {
       this.restartAttempt += 1;
     }
 
+    // 代理占用冷却期内不允许重连: 实际延迟取"策略延迟"与"冷却剩余时间"的较大者
+    const proxyBusyRemainingMs = Math.max(0, this.proxySessionBusyUntilMs - Date.now());
+    const totalDelayMs = Math.max(schedule.totalDelayMs, proxyBusyRemainingMs);
+
     this.state = 'waiting_restart';
     this.pendingRestartReason = reason;
     this.pendingRestartDelayOverrideMs = null;
-    this.pendingRestartDelayMs = schedule.totalDelayMs;
-    this.pendingRestartScheduledAt = getTimestamp(new Date(Date.now() + schedule.totalDelayMs));
+    this.pendingRestartDelayMs = totalDelayMs;
+    this.pendingRestartScheduledAt = getTimestamp(new Date(Date.now() + totalDelayMs));
     this.publishStatus();
     this.recordLifecycle(LIFECYCLE_EVENTS.BOT_RESTART_SCHEDULED, {
       reason,
-      detail: `delayMs=${schedule.totalDelayMs}`
+      detail: proxyBusyRemainingMs > 0
+        ? `delayMs=${totalDelayMs} proxyBusyRemainingMs=${proxyBusyRemainingMs}`
+        : `delayMs=${totalDelayMs}`
     });
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
@@ -2881,12 +2937,12 @@ class BotRuntime {
       void this.start({ source: 'scheduled_restart' }).catch((error) => {
         this.logger.error('[BOT] restart failed', error);
       });
-    }, schedule.totalDelayMs);
+    }, totalDelayMs);
 
     const failureDetail = this.lastFailure ? ` detail=${this.lastFailure}` : '';
     const attemptText = scheduleConfigured ? ` attempt=${this.restartAttempt}` : '';
     this.logger.warn(
-      `[BOT] scheduled restart reason=${reason}${attemptText} baseDelayMs=${schedule.baseDelayMs} jitterMs=${schedule.jitterMs} totalDelayMs=${schedule.totalDelayMs}${failureDetail}`
+      `[BOT] scheduled restart reason=${reason}${attemptText} baseDelayMs=${schedule.baseDelayMs} jitterMs=${schedule.jitterMs} totalDelayMs=${totalDelayMs}${failureDetail}`
     );
   }
 
