@@ -241,3 +241,18 @@ test('stop() 取消队列并清空 impl/bot', async () => {
   assert.equal(feature.impl, null);
   assert.equal(feature.bot, null);
 });
+
+test('裸 vaultqueue 回复当前配置 + 帮助说明', () => {
+  const { feature } = createLead();
+  const context = createContext();
+
+  feature.handleQueueCommand(context, []);
+
+  assert.match(context.text, /当前宝库队列配置\(未做改动\)/);
+  assert.doesNotMatch(context.text, /配置已保存/);
+  assert.match(context.text, /目标: \(未设置\)/);
+  assert.match(context.text, /vaultqueue --start/);
+  assert.match(context.text, /vaultqueue --reset/);
+  assert.match(context.text, /--delay=8000/);
+  assert.match(context.text, /重启后需要重新配置/);
+});

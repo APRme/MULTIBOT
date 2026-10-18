@@ -306,6 +306,22 @@ class VaultFeature {
     return `目标: ${targets} | 间隔: ${cfg.delayMs}ms | 落地等待: ${cfg.settleMs}ms | 结束回基地: ${cfg.backAtEnd ? '是' : '否'} | 宝库坐标: ${at}`;
   }
 
+  getQueueHelpLines() {
+    return [
+      "用法:",
+      "  vaultqueue <玩家名...> [--delay=ms] [--settle=ms] [--at=x,y,z] [--no-back]   保存配置(不执行)",
+      "  vaultqueue --start    按已保存配置执行",
+      "  vaultqueue stop       停止运行中的队列",
+      "  vaultqueue --reset    清空配置",
+      "说明:",
+      "  --delay=8000   每个 bot 之间的间隔(默认 8000ms)",
+      "  --settle=1200  tpahere 后等待落地确认(默认 1200ms)",
+      "  --at=x,y,z     直接指定宝库坐标(跳过自动找宝库)",
+      "  --no-back      结束后车头不回基地",
+      "  配置仅保存在内存, 重启后需要重新配置"
+    ];
+  }
+
   cancelQueue(context = null) {
     if (!this.queueRunning) {
       if (context) context.replyInfo('当前没有在运行的宝库队列');
@@ -403,6 +419,19 @@ class VaultFeature {
     }
 
     // 配置模式: 只写入内存, 不执行
+    const changed = parsed.targets.length > 0
+      || parsed.settleMs !== undefined
+      || parsed.delayMs !== undefined
+      || parsed.backAtEnd !== undefined
+      || parsed.at !== undefined;
+
+    if (!changed) {
+      context.replyInfo('=== 当前宝库队列配置(未做改动) ===');
+      context.replyInfo(this.describeQueueConfig());
+      for (const line of this.getQueueHelpLines()) context.replyInfo(line);
+      return;
+    }
+
     if (parsed.targets.length > 0) this.queueConfig.targets = parsed.targets;
     if (parsed.settleMs !== undefined) this.queueConfig.settleMs = parsed.settleMs;
     if (parsed.delayMs !== undefined) this.queueConfig.delayMs = parsed.delayMs;
