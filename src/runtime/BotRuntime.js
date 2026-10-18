@@ -3081,6 +3081,7 @@ class BotRuntime {
     this.rideFeature.stop();
     this.autoEatController.stop();
     this.treeFarmFeature.stop();
+    this.vaultFeature.stop();
     this.movementFeature.stop();
     this.digFeature.stop();
     this.blockUseFeature.stop();
