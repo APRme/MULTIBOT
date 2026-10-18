@@ -1,4 +1,5 @@
 const { parseMovementOptions } = require('../util/pathfinding');
+const { replyLinesSpaced } = require('../util/replySpacing');
 
 class CommandDispatcher {
   constructor(options = {}) {
@@ -211,7 +212,13 @@ class CommandDispatcher {
     }
 
     if (command === 'help') {
-      this.getHelpLines().forEach((line) => context.replyInfo(line));
+      const helpLines = this.getHelpLines();
+      const merged = [];
+      // 两条并一条, 减少消息条数; 发送时再按间隔节流
+      for (let index = 0; index < helpLines.length; index += 2) {
+        merged.push(helpLines.slice(index, index + 2).map((line) => String(line).trim()).join('  |  '));
+      }
+      replyLinesSpaced(context, merged).catch(() => {});
       return true;
     }
 

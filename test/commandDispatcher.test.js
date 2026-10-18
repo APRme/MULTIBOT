@@ -19,6 +19,16 @@ function createContext(overrides = {}) {
   };
 }
 
+// help 现在按最小间隔逐条异步发送, 断言前需要等待目标内容出现
+async function waitForMessage(context, needle, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (context.messages.some((entry) => String(entry.message || '').includes(needle))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 test('CommandDispatcher lockstatus replies a single combined message', async () => {
   const calls = [];
   const dispatcher = createDispatcher(calls, {
@@ -348,13 +358,13 @@ test('CommandDispatcher routes migrated MULTIBOT commands', async () => {
     ['stopscript']
   ]);
 
-  assert.ok(context.messages.some((entry) => entry.message.includes('broadcast inv <子命令>')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('broadcast eat <物品id>')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=on terrainHandling=on inventoryHandling=on')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('已广播执行: inv dropall')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('已广播执行: eat bread')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('快捷栏信息: 1:stone')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('当前共有 2 个玩家')));
+  assert.ok(await waitForMessage(context, "broadcast inv <子命令>"), '缺少帮助行: ' + "broadcast inv <子命令>");
+  assert.ok(await waitForMessage(context, 'broadcast eat <物品id>'), '缺少: broadcast eat <物品id>');
+  assert.ok(await waitForMessage(context, '当前能力: entityHandling=on terrainHandling=on inventoryHandling=on'), '缺少: 当前能力: entityHandling=on terrainHandling=on inventoryHandling=on');
+  assert.ok(await waitForMessage(context, '已广播执行: inv dropall'), '缺少: 已广播执行: inv dropall');
+  assert.ok(await waitForMessage(context, '已广播执行: eat bread'), '缺少: 已广播执行: eat bread');
+  assert.ok(await waitForMessage(context, '快捷栏信息: 1:stone'), '缺少: 快捷栏信息: 1:stone');
+  assert.ok(await waitForMessage(context, '当前共有 2 个玩家'), '缺少: 当前共有 2 个玩家');
   assert.ok(context.messages.some((entry) => entry.message === 'record'));
   assert.ok(context.messages.some((entry) => entry.message === 'entities'));
 });
@@ -443,8 +453,8 @@ test('CommandDispatcher blocks entity-gated commands when entityHandling is disa
   await dispatcher.dispatch('dig 1 2 3', context);
 
   assert.deepEqual(calls, [['dig', 1, 2, 3]]);
-  assert.ok(context.messages.some((entry) => entry.message.includes('attack @n [已禁用: entityHandling]')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=off terrainHandling=on inventoryHandling=on')));
+  assert.ok(await waitForMessage(context, "attack @n [已禁用: entityHandling]"), '缺少帮助行: ' + "attack @n [已禁用: entityHandling]");
+  assert.ok(await waitForMessage(context, '当前能力: entityHandling=off terrainHandling=on inventoryHandling=on'), '缺少: 当前能力: entityHandling=off terrainHandling=on inventoryHandling=on');
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 attack @n')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 interact @n')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 fish')));
@@ -481,10 +491,10 @@ test('CommandDispatcher blocks terrain-gated commands when terrainHandling is di
     ['circle'],
     ['attack']
   ]);
-  assert.ok(context.messages.some((entry) => entry.message.includes('goto <x> <y> <z> [选项...] [已禁用: terrainHandling]')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('ride | ride <uuid>')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('ride player | ride w [a] [已禁用: terrainHandling]')));
-  assert.ok(context.messages.some((entry) => entry.message.includes('当前能力: entityHandling=on terrainHandling=off inventoryHandling=on')));
+  assert.ok(await waitForMessage(context, "goto <x> <y> <z> [选项...] [已禁用: terrainHandling]"), '缺少帮助行: ' + "goto <x> <y> <z> [选项...] [已禁用: terrainHandling]");
+  assert.ok(await waitForMessage(context, 'ride | ride <uuid>'), '缺少: ride | ride <uuid>');
+  assert.ok(await waitForMessage(context, 'ride player | ride w [a] [已禁用: terrainHandling]'), '缺少: ride player | ride w [a] [已禁用: terrainHandling]');
+  assert.ok(await waitForMessage(context, '当前能力: entityHandling=on terrainHandling=off inventoryHandling=on'), '缺少: 当前能力: entityHandling=on terrainHandling=off inventoryHandling=on');
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 goto')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 useblock')));
   assert.ok(context.messages.some((entry) => entry.type === 'error' && entry.message.includes('无法执行 dig')));

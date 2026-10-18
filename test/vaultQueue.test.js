@@ -15,7 +15,7 @@ function createContext() {
   };
 }
 
-async function waitForText(context, pattern, timeoutMs = 1500) {
+async function waitForText(context, pattern, timeoutMs = 3000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (pattern.test(context.text)) return true;
@@ -52,19 +52,20 @@ function createLead(options = {}) {
   return { feature, bot, calls };
 }
 
-test('只保存配置: 不发包, 不执行, 不持久化', () => {
+test('只保存配置: 不发包, 不执行, 不持久化', async () => {
   const { feature, calls } = createLead();
   const context = createContext();
 
   feature.handleQueueCommand(context, ['A', 'B', '--delay=7000']);
+  assert.equal(await waitForText(context, /配置已保存/), true);
 
   assert.equal(calls.length, 0);
   assert.deepEqual(feature.queueConfig.targets, ['A', 'B']);
   assert.equal(feature.queueConfig.delayMs, 7000);
   assert.equal(feature.queueConfigPath, undefined);
   assert.match(context.text, /配置已保存\(仅内存/);
-  assert.match(context.text, /目标: A B/);
-  assert.match(context.text, /vaultqueue --start/);
+  assert.equal(await waitForText(context, /目标: A B/), true);
+  assert.equal(await waitForText(context, /vaultqueue --start/), true);
 });
 
 test('只改参数时保留已有目标并去重过滤', () => {
@@ -242,17 +243,18 @@ test('stop() 取消队列并清空 impl/bot', async () => {
   assert.equal(feature.bot, null);
 });
 
-test('裸 vaultqueue 回复当前配置 + 帮助说明', () => {
+test('裸 vaultqueue 回复当前配置 + 帮助说明', async () => {
   const { feature } = createLead();
   const context = createContext();
 
   feature.handleQueueCommand(context, []);
+  assert.equal(await waitForText(context, /vaultqueue --reset/), true);
 
   assert.match(context.text, /当前宝库队列配置\(未做改动\)/);
   assert.doesNotMatch(context.text, /配置已保存/);
   assert.match(context.text, /目标: \(未设置\)/);
   assert.match(context.text, /vaultqueue --start/);
   assert.match(context.text, /vaultqueue --reset/);
-  assert.match(context.text, /--delay=8000/);
-  assert.match(context.text, /重启后需要重新配置/);
+  assert.match(context.text, /--delay=ms/);
+  assert.equal(await waitForText(context, /重启后需要重新配置/), true);
 });

@@ -1,5 +1,6 @@
 const path = require('path');
 const { requireFresh } = require('../../util/requireFresh');
+const { replyLinesSpaced } = require('../../util/replySpacing');
 
 // 宝库方块状态的解码依据(1.21.x/26.2 实测): vault 共 32 个状态,
 // vault_state 是变化最快的属性, 因此 (stateId - minStateId) % 4 即为状态序号。
@@ -308,17 +309,9 @@ class VaultFeature {
 
   getQueueHelpLines() {
     return [
-      "用法:",
-      "  vaultqueue <玩家名...> [--delay=ms] [--settle=ms] [--at=x,y,z] [--no-back]   保存配置(不执行)",
-      "  vaultqueue --start    按已保存配置执行",
-      "  vaultqueue stop       停止运行中的队列",
-      "  vaultqueue --reset    清空配置",
-      "说明:",
-      "  --delay=8000   每个 bot 之间的间隔(默认 8000ms)",
-      "  --settle=1200  tpahere 后等待落地确认(默认 1200ms)",
-      "  --at=x,y,z     直接指定宝库坐标(跳过自动找宝库)",
-      "  --no-back      结束后车头不回基地",
-      "  配置仅保存在内存, 重启后需要重新配置"
+      '用法: vaultqueue <玩家名...> [--delay=ms] [--settle=ms] [--at=x,y,z] [--no-back]  (保存配置) | vaultqueue --start (执行) | vaultqueue stop (停止) | vaultqueue --reset (清空)',
+      '说明: --delay 每bot间隔(默认8000ms) · --settle tpahere后落地等待(默认1200ms) · --at=x,y,z 直接指定宝库坐标 · --no-back 结束不回基地',
+      '提示: 配置仅保存在内存, 重启后需要重新配置; 一个队列内所有 bot 开同一个宝库'
     ];
   }
 
@@ -426,9 +419,10 @@ class VaultFeature {
       || parsed.at !== undefined;
 
     if (!changed) {
-      context.replyInfo('=== 当前宝库队列配置(未做改动) ===');
-      context.replyInfo(this.describeQueueConfig());
-      for (const line of this.getQueueHelpLines()) context.replyInfo(line);
+      replyLinesSpaced(context, [
+        '=== 当前宝库队列配置(未做改动) ===',
+        `配置: ${this.describeQueueConfig()}`
+      ].concat(this.getQueueHelpLines()), { gapMs: 700 }).catch(() => {});
       return;
     }
 
@@ -438,9 +432,11 @@ class VaultFeature {
     if (parsed.backAtEnd !== undefined) this.queueConfig.backAtEnd = parsed.backAtEnd;
     if (parsed.at !== undefined) this.queueConfig.at = parsed.at;
 
-    context.replyInfo('宝库队列配置已保存(仅内存, 重启后需重新配置)');
-    context.replyInfo(this.describeQueueConfig());
-    context.replyInfo('准备好后发送: vaultqueue --start');
+    replyLinesSpaced(context, [
+      '宝库队列配置已保存(仅内存, 重启后需重新配置)',
+      `配置: ${this.describeQueueConfig()}`,
+      '准备好后发送: vaultqueue --start'
+    ], { gapMs: 700 }).catch(() => {});
   }
 
   async runQueue(context) {
