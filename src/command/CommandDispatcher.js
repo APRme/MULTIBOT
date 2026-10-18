@@ -137,7 +137,7 @@ class CommandDispatcher {
       '  stopdig',
       withCapability('cplace [间隔ms] [stop|nostop]', { terrainHandling: true }),
       '  stopcplace',
-      withCapability('vault', { terrainHandling: true }),
+      '  vault [x y z]',
       '  script <文件>',
       '  stopscript',
       '  reloadwhitelist',
@@ -568,12 +568,28 @@ class CommandDispatcher {
       return this.cplaceFeature.handleStopCommand(context);
     }
 
-    if (command === 'vault' && rawParts.length === 1) {
-      if (!this.ensureTerrainHandling(context, 'vault')) {
+    if (command === 'vault') {
+      const vaultArgs = rawParts.slice(1);
+      const lightweight = !this.isEntityHandlingEnabled() && !this.isTerrainHandlingEnabled();
+
+      if (lightweight) {
+        if (!this.isInventoryHandlingEnabled()) {
+          context.replyError('vault 需要背包处理能力(inventoryHandling)才能装备钥匙');
+          return true;
+        }
+
+        if (vaultArgs.length !== 3) {
+          context.replyError('轻量模式需要提供宝库坐标: vault <x> <y> <z>');
+          return true;
+        }
+      } else if (vaultArgs.length !== 0 && vaultArgs.length !== 3) {
+        context.replyError('用法: vault [x y z]');
+        return true;
+      } else if (vaultArgs.length === 0 && !this.ensureTerrainHandling(context, 'vault')) {
         return true;
       }
 
-      this.vaultFeature.handleCommand(context);
+      this.vaultFeature.handleCommand(context, vaultArgs);
       return true;
     }
 
