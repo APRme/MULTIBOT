@@ -138,6 +138,7 @@ class CommandDispatcher {
       withCapability('cplace [间隔ms] [stop|nostop]', { terrainHandling: true }),
       '  stopcplace',
       '  vault [x y z]',
+      '  vaultqueue [--settle=ms] [--delay=ms] [--no-back] <玩家名...> | vaultqueue stop',
       '  script <文件>',
       '  stopscript',
       '  reloadwhitelist',
@@ -431,6 +432,23 @@ class CommandDispatcher {
 
     if (command === 'treefarm') {
       return this.treeFarmFeature.handleTreeFarmCommand(context, lowerParts.slice(1));
+    }
+
+    if (command === 'vaultqueue') {
+      const queueArgs = rawParts.slice(1);
+
+      if (queueArgs.length > 0 && String(queueArgs[0]).toLowerCase() === 'stop') {
+        this.vaultFeature.cancelQueue(context);
+        return true;
+      }
+
+      if (!this.isTerrainHandlingEnabled() || !this.isEntityHandlingEnabled()) {
+        context.replyError('vaultqueue 需要完整模式(地形处理 + 实体处理)的车头');
+        return true;
+      }
+
+      this.vaultFeature.runQueue(context, queueArgs);
+      return true;
     }
 
     if (command === 'eat') {

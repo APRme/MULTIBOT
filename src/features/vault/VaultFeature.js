@@ -41,6 +41,10 @@ class VaultFeature {
     this.impl = null;
     this.bot = null;
     this.fallbackSequence = 0;
+    this.lastVault = null;
+    this.queueRunning = false;
+    this.queueCancelled = false;
+    this.queueWake = null;
   }
 
   // 完整模式(有区块/实体数据)才加载遗留模块: 它会 loadPlugin(pathfinder), 轻量模式不可用。
@@ -280,7 +284,143 @@ class VaultFeature {
     });
   }
 
+  // ---------- 宝库队列(车头把多个轻量 bot 依次拉到同一个宝库) ----------
+
+  cancelQueue(context = null) {
+    if (!this.queueRunning) {
+      if (context) context.replyInfo('当前没有在运行的宝库队列');
+      return false;
+    }
+
+    this.queueCancelled = true;
+    if (typeof this.queueWake === 'function') {
+      const wake = this.queueWake;
+      this.queueWake = null;
+      wake();
+    }
+
+    if (context) context.replyInfo('已请求停止宝库队列');
+    return true;
+  }
+
+  sleepCancellable(ms) {
+    if (this.queueCancelled) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.queueWake = null;
+        resolve();
+      }, Math.max(0, Number(ms) || 0));
+      this.queueWake = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  }
+
+  parseQueueArgs(args) {
+    const options = { settleMs: 1200, delayMs: 8000, backAtEnd: true, targets: [] };
+
+    for (const raw of Array.isArray(args) ? args : []) {
+      const value = String(raw || '').trim();
+      if (!value) continue;
+
+      const settle = value.match(/^--settle=(\d+)$/i);
+      if (settle) { options.settleMs = Number(settle[1]); continue; }
+
+      const delay = value.match(/^--delay=(\d+)$/i);
+      if (delay) { options.delayMs = Number(delay[1]); continue; }
+
+      if (/^--no-back$/i.test(value)) { options.backAtEnd = false; continue; }
+      if (/^--back$/i.test(value)) { options.backAtEnd = true; continue; }
+
+      if (/^[A-Za-z0-9_]{1,16}$/.test(value)) options.targets.push(value);
+    }
+
+    options.targets = Array.from(new Set(options.targets));
+    return options;
+  }
+
+  async runQueue(context, args) {
+    if (!this.impl || typeof this.impl.openNearestVault !== 'function') {
+      context.replyError('vaultqueue 只能在完整模式(有地形/实体数据)的车头上使用');
+      return;
+    }
+
+    if (!this.bot || typeof this.bot.chat !== 'function') {
+      context.replyError('机器人尚未连接');
+      return;
+    }
+
+    if (this.queueRunning) {
+      context.replyError('已有宝库队列在运行(可用 vaultqueue stop 停止)');
+      return;
+    }
+
+    const options = this.parseQueueArgs(args);
+    if (options.targets.length === 0) {
+      context.replyError('用法: vaultqueue [--settle=ms] [--delay=ms] [--no-back] <玩家名...>');
+      return;
+    }
+
+    this.queueRunning = true;
+    this.queueCancelled = false;
+
+    try {
+      context.replyInfo('宝库队列: 车头先开启最近的宝库 ...');
+      const opened = await this.impl.openNearestVault();
+      const position = opened && opened.position;
+
+      if (!opened || opened.success !== true || !position) {
+        context.replyError(`车头开箱失败: ${(opened && opened.message) || '未知原因'}`);
+        return;
+      }
+
+      const { x, y, z } = position;
+      this.lastVault = { x, y, z };
+      context.replyInfo(`车头已开启宝库 (${x}, ${y}, ${z})，开始派送 ${options.targets.length} 个 bot`);
+
+      let delivered = 0;
+      for (const target of options.targets) {
+        if (this.queueCancelled) break;
+
+        this.bot.chat(`/tpahere ${target}`);
+        await this.sleepCancellable(options.settleMs);
+
+        this.bot.chat(`/minecraft:w ${target} vault ${x} ${y} ${z}`);
+        delivered += 1;
+        context.replyInfo(`[${delivered}/${options.targets.length}] 已让 ${target} 打开 (${x}, ${y}, ${z})`);
+
+        await this.sleepCancellable(options.delayMs);
+      }
+
+      if (options.backAtEnd) {
+        this.bot.chat('/back');
+      }
+
+      const suffix = options.backAtEnd ? '，车头已 /back 回基地' : '';
+      if (this.queueCancelled) {
+        context.replyInfo(`宝库队列已停止: 已派送 ${delivered}/${options.targets.length} 个 bot${suffix}`);
+      } else {
+        context.replyInfo(`宝库队列完成: 已派送 ${delivered}/${options.targets.length} 个 bot${suffix}`);
+      }
+    } catch (error) {
+      context.replyError(`宝库队列出错: ${error.message}`);
+    } finally {
+      this.queueRunning = false;
+      this.queueCancelled = false;
+      this.queueWake = null;
+    }
+  }
+
   stop() {
+    this.cancelQueue();
+
     if (this.impl && typeof this.impl.cleanupTrial === 'function') {
       this.impl.cleanupTrial();
     }
