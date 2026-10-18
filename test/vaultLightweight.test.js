@@ -43,8 +43,17 @@ function createHarness(options = {}) {
   bot.quickBarSlot = 0;
   bot.swingArm = () => {};
   bot.setQuickBarSlot = (slot) => { bot.quickBarSlot = slot; };
+  Object.defineProperty(bot, 'heldItem', {
+    get() { return bot.inventory.slots[36 + (Number.isFinite(bot.quickBarSlot) ? bot.quickBarSlot : 0)] || null; }
+  });
   const moves = [];
-  bot.moveSlotItem = async (source, dest) => { moves.push([source, dest]); };
+  bot.moveSlotItem = async (source, dest) => {
+    moves.push([source, dest]);
+    const slots = bot.inventory.slots;
+    const temp = slots[dest];
+    slots[dest] = slots[source];
+    slots[source] = temp;
+  };
 
   let sequence = 0;
   const feature = new VaultFeature({

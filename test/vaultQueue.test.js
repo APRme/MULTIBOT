@@ -46,10 +46,18 @@ function createLead(options = {}) {
     inventory: { slots: [], hotbarStart: 36 },
     quickBarSlot: 0,
     setQuickBarSlot: (slot) => { bot.quickBarSlot = slot; },
-    moveSlotItem: async () => {},
+    moveSlotItem: async (source, dest) => {
+      const slots = bot.inventory.slots;
+      const temp = slots[dest];
+      slots[dest] = slots[source];
+      slots[source] = temp;
+    },
     swingArm: () => {},
     registry: { blocksByName: { vault: { minStateId: MIN_STATE_ID } } }
   };
+  Object.defineProperty(bot, 'heldItem', {
+    get() { return bot.inventory.slots[36 + (Number.isFinite(bot.quickBarSlot) ? bot.quickBarSlot : 0)] || null; }
+  });
   if (options.withKey !== false) bot.inventory.slots[36] = { name: 'trial_key', count: 1, slot: 36 };
 
   const feature = new VaultFeature({

@@ -138,7 +138,7 @@ class VaultFeature {
     for (const candidate of candidates) {
       const equipped = await this.equipItemToHand(candidate);
       if (!equipped) {
-        context.replyError(`装备钥匙失败: ${candidate.itemName}`);
+        context.replyError(`装备钥匙失败: ${candidate.itemName}(主手=${(this.bot && this.bot.heldItem && this.bot.heldItem.name) || '空'})`);
         return;
       }
 
@@ -181,25 +181,38 @@ class VaultFeature {
     if (!inventory) return false;
 
     const hotbarStart = Number.isFinite(inventory.hotbarStart) ? inventory.hotbarStart : 36;
-    const quickBarSlot = Number.isFinite(bot.quickBarSlot) ? bot.quickBarSlot : 0;
-    const handSlot = hotbarStart + quickBarSlot;
+    const selected = Number.isFinite(bot.quickBarSlot) ? bot.quickBarSlot : 0;
+    const handSlot = hotbarStart + selected;
 
-    if (candidate.slot === handSlot) return true;
-
-    if (candidate.slot >= hotbarStart && candidate.slot < hotbarStart + 9) {
-      if (typeof bot.setQuickBarSlot !== 'function') return false;
-      await bot.setQuickBarSlot(candidate.slot - hotbarStart);
-      return true;
+    if (candidate.slot !== handSlot) {
+      if (candidate.slot >= hotbarStart && candidate.slot < hotbarStart + 9) {
+        if (typeof bot.setQuickBarSlot !== 'function') return false;
+        await bot.setQuickBarSlot(candidate.slot - hotbarStart);
+      } else if (typeof bot.moveSlotItem === 'function') {
+        await bot.moveSlotItem(candidate.slot, handSlot);
+        // 关键: 移动后必须再选中一次, 轻量模式下 quickBarSlot 初始为 null
+        if (typeof bot.setQuickBarSlot === 'function') await bot.setQuickBarSlot(selected);
+      } else if (typeof bot.equip === 'function') {
+        await bot.equip(candidate.item, 'hand');
+      } else {
+        return false;
+      }
+    } else if (typeof bot.setQuickBarSlot === 'function') {
+      await bot.setQuickBarSlot(selected);
     }
 
-    if (typeof bot.moveSlotItem === 'function') {
-      await bot.moveSlotItem(candidate.slot, handSlot);
-      return true;
-    }
+    // 等一个 tick 让 set_slot/held_item 同步
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
-    if (typeof bot.equip === 'function') {
-      await bot.equip(candidate.item, 'hand');
-      return true;
+    const held = bot.heldItem;
+    if (held && held.name === candidate.itemName) return true;
+
+    // 兜底: 再选一次当前槽位
+    if (typeof bot.setQuickBarSlot === 'function') {
+      await bot.setQuickBarSlot(handSlot - hotbarStart);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const retryHeld = bot.heldItem;
+      if (retryHeld && retryHeld.name === candidate.itemName) return true;
     }
 
     return false;
