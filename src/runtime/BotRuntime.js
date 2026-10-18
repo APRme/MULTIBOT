@@ -2088,6 +2088,9 @@ class BotRuntime {
       this.treeFarmFeature.attach(bot);
     }
 
+    // 宝库: 轻量模式也要 attach(坐标路径只依赖 _client/背包/sequence), 遗留自动寻路模块由 attach 内部按完整模式决定
+    this.vaultFeature.attach(bot);
+
     if (this.isEntityHandlingEnabled()) {
       this.attackFeature.attach(bot);
       this.entityInteractFeature.attach(bot);
@@ -2106,7 +2109,6 @@ class BotRuntime {
     }
 
     if (this.isTerrainHandlingEnabled()) {
-      this.vaultFeature.attach(bot);
       this.blockUseFeature.attach(bot);
       this.digFeature.attach(bot);
       this.cplaceFeature.attach(bot);

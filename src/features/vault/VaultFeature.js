@@ -45,6 +45,8 @@ class VaultFeature {
     this.fallbackSequence = 0;
     this.lastVault = null;
     this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null };
+    this.chatGapMs = 900;
+    this.lastChatAt = 0;
     this.queueRunning = false;
     this.queueCancelled = false;
     this.queueWake = null;
@@ -461,6 +463,19 @@ class VaultFeature {
   }
 
   // 车头自己就地开箱(不移动): 装钥匙 -> 发 block_place -> 等 vault_state 变化
+  // 出站聊天节流: 保证两次 bot.chat 之间至少 chatGapMs, 避免服务端"发送过快"丢包
+  async sendChatThrottled(message) {
+    if (!this.bot || typeof this.bot.chat !== 'function') return false;
+
+    const now = Date.now();
+    const waitMs = Math.max(0, this.lastChatAt + this.chatGapMs - now);
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+
+    this.lastChatAt = Date.now();
+    this.bot.chat(message);
+    return true;
+  }
+
   async activateOwnVault(coordinates) {
     const candidates = [];
     for (const itemName of KEY_ITEM_CANDIDATES) {
@@ -562,10 +577,10 @@ class VaultFeature {
       for (const target of cfg.targets) {
         if (this.queueCancelled) break;
 
-        this.bot.chat(`/tpahere ${target}`);
+        await this.sendChatThrottled(`/tpahere ${target}`);
         await this.sleepCancellable(cfg.settleMs);
 
-        this.bot.chat(`/minecraft:w ${target} vault ${x} ${y} ${z}`);
+        await this.sendChatThrottled(`/minecraft:w ${target} vault ${x} ${y} ${z}`);
         delivered += 1;
         context.replyInfo(`[${delivered}/${cfg.targets.length}] 已让 ${target} 打开 (${x}, ${y}, ${z})`);
 
@@ -573,7 +588,7 @@ class VaultFeature {
       }
 
       if (cfg.backAtEnd) {
-        this.bot.chat('/back');
+        await this.sendChatThrottled('/back');
       }
 
       const suffix = cfg.backAtEnd ? '，车头已 /back 回基地' : '';
