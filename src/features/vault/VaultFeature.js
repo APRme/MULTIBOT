@@ -439,6 +439,51 @@ class VaultFeature {
     ], { gapMs: 700 }).catch(() => {});
   }
 
+  // 眼睛 -> 方块 1x1x1 AABB 最近点距离(与服务端 isWithinBlockInteractionRange 同度量)
+  distanceToBlockCube(position) {
+    const entity = this.bot && this.bot.entity && this.bot.entity.position;
+    if (!entity || !position) return null;
+
+    const eyeX = Number(entity.x);
+    const eyeY = Number(entity.y) + 1.62;
+    const eyeZ = Number(entity.z);
+    if (![eyeX, eyeY, eyeZ].every((value) => Number.isFinite(value))) return null;
+
+    const dx = Math.max(position.x - eyeX, 0, eyeX - (position.x + 1));
+    const dy = Math.max(position.y - eyeY, 0, eyeY - (position.y + 1));
+    const dz = Math.max(position.z - eyeZ, 0, eyeZ - (position.z + 1));
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  getInteractionLimit() {
+    const mode = this.bot && this.bot.game ? this.bot.game.gameMode : 'survival';
+    return mode === 'creative' ? 6.0 : 5.5;
+  }
+
+  // 车头自己就地开箱(不移动): 装钥匙 -> 发 block_place -> 等 vault_state 变化
+  async activateOwnVault(coordinates) {
+    const candidates = [];
+    for (const itemName of KEY_ITEM_CANDIDATES) {
+      const found = this.findItemSlot(itemName);
+      if (found) candidates.push({ itemName, ...found });
+    }
+
+    if (candidates.length === 0) {
+      return { ok: false, message: `背包里没有宝库钥匙(${KEY_ITEM_CANDIDATES.join(' / ')})` };
+    }
+
+    for (const candidate of candidates) {
+      const equipped = await this.equipItemToHand(candidate);
+      if (!equipped) return { ok: false, message: `装备钥匙失败: ${candidate.itemName}` };
+
+      const outcome = await this.sendActivateAndWait(coordinates);
+      if (outcome === 'opened') return { ok: true, key: candidate.itemName };
+      if (outcome === 'error') return { ok: false, message: '发送宝库激活包失败' };
+    }
+
+    return { ok: false, message: '未确认宝库已激活(可能已领取过 / 钥匙不对 / 距离不足)' };
+  }
+
   async runQueue(context) {
     const cfg = this.queueConfig;
 
@@ -453,7 +498,7 @@ class VaultFeature {
       return;
     }
 
-    if (!cfg.at && (!this.impl || typeof this.impl.openNearestVault !== 'function')) {
+    if (!cfg.at && (!this.impl || typeof this.impl.findNearestVault !== 'function')) {
       context.replyError('车头没有加载宝库模块(impl 缺失)，请重启该 bot 实例后再试, 或先用 --at=x,y,z 指定坐标');
       return;
     }
@@ -478,12 +523,33 @@ class VaultFeature {
         position = { ...cfg.at };
         context.replyInfo(`使用已配置的宝库坐标 (${position.x}, ${position.y}, ${position.z})`);
       } else {
-        context.replyInfo('宝库队列: 车头先开启最近的宝库 ...');
-        const opened = await this.impl.openNearestVault();
-        position = opened && opened.position;
+        const vault = this.impl.findNearestVault(30);
+        const vaultPosition = vault && vault.position;
 
-        if (!opened || opened.success !== true || !position) {
-          context.replyError(`车头开箱失败: ${(opened && opened.message) || '未知原因'}`);
+        if (!vaultPosition) {
+          context.replyError('车头开箱失败: 30 格内没有找到宝库');
+          return;
+        }
+
+        position = { x: vaultPosition.x, y: vaultPosition.y, z: vaultPosition.z };
+        const distance = this.distanceToBlockCube(position);
+        const limit = this.getInteractionLimit();
+
+        if (distance === null) {
+          context.replyError('车头开箱失败: 无法计算与宝库的距离(缺少位置信息)');
+          return;
+        }
+
+        if (distance > limit) {
+          context.replyError(`车头开箱失败: 宝库在 ${distance.toFixed(2)} 格外(交互上限 ${limit} 格), 请把车头移到宝库 3 格内再试`);
+          return;
+        }
+
+        context.replyInfo(`车头就地激活宝库 (${position.x}, ${position.y}, ${position.z}), 距离 ${distance.toFixed(2)} 格`);
+
+        const own = await this.activateOwnVault(position);
+        if (!own.ok) {
+          context.replyError(`车头开箱失败: ${own.message}`);
           return;
         }
       }
