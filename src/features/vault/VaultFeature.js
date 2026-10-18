@@ -563,11 +563,16 @@ class VaultFeature {
         context.replyInfo(`车头就地激活宝库 (${position.x}, ${position.y}, ${position.z}), 距离 ${distance.toFixed(2)} 格`);
 
         const own = await this.activateOwnVault(position);
-        if (!own.ok) {
-          context.replyError(`车头开箱失败: ${own.message}`);
-          return;
+        if (own.ok) {
+          context.replyInfo(`车头已开启宝库 (${position.x}, ${position.y}, ${position.z})`);
+        } else {
+          context.replyInfo(`车头未开箱: ${own.message} — 跳过车头, 继续派送其它 bot`);
         }
       }
+
+      // 无论车头开成没开成, 都先等一个正常间隔: 开成了要等宝库 ejecting 结束, 没开成也保持节奏
+      if (this.queueCancelled) return;
+      await this.sleepCancellable(cfg.delayMs);
 
       const { x, y, z } = position;
       this.lastVault = { x, y, z };

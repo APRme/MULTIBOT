@@ -173,15 +173,29 @@ test('30 格内没有宝库时报错', async () => {
   assert.equal(await waitForText(context, /30 格内没有找到宝库/), true);
 });
 
-test('车头没有钥匙时报错', async () => {
+test('车头没有钥匙时跳过车头, 继续派送', async () => {
   const { feature, calls } = createLead({ withKey: false });
   const context = createContext();
 
-  feature.handleQueueCommand(context, ['A']);
+  feature.handleQueueCommand(context, ['--settle=5', '--delay=5', '--no-back', 'A']);
   feature.handleQueueCommand(context, ['--start']);
 
-  assert.equal(await waitForText(context, /背包里没有宝库钥匙/), true);
-  assert.equal(calls.length, 0);
+  assert.equal(await waitForText(context, /跳过车头/), true);
+  assert.equal(await waitForText(context, /宝库队列完成/), true);
+  assert.deepEqual(calls, ['/tpahere A', '/minecraft:w A vault 1 64 0']);
+});
+
+test('车头已领取过(激活超时)时跳过车头, 继续派送', async () => {
+  const { feature, calls } = createLead({ activateTimeoutMs: 60 });
+  const context = createContext();
+
+  // 不回应 block_change => 车头激活超时
+  feature.handleQueueCommand(context, ['--settle=5', '--delay=5', '--no-back', 'A']);
+  feature.handleQueueCommand(context, ['--start']);
+
+  assert.equal(await waitForText(context, /车头未开箱/, 3000), true);
+  assert.equal(await waitForText(context, /宝库队列完成/, 3000), true);
+  assert.deepEqual(calls, ['/tpahere A', '/minecraft:w A vault 1 64 0']);
 });
 
 test('--at 模式跳过找宝库, 直接派单', async () => {
@@ -229,7 +243,7 @@ test('cancelQueue 中途停止, 已拉过来的 bot 仍收到坐标', async () =
   const { feature, client, calls } = createLead();
   const context = createContext();
 
-  feature.handleQueueCommand(context, ['--settle=60', '--delay=5000', 'T1', 'T2']);
+  feature.handleQueueCommand(context, ['--settle=60', '--delay=300', 'T1', 'T2']);
   feature.handleQueueCommand(context, ['--start']);
 
   await new Promise((r) => setTimeout(r, 20));
