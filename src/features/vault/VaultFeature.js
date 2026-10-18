@@ -43,6 +43,7 @@ class VaultFeature {
     this.bot = null;
     this.fallbackSequence = 0;
     this.lastVault = null;
+    this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null };
     this.queueRunning = false;
     this.queueCancelled = false;
     this.queueWake = null;
@@ -296,7 +297,14 @@ class VaultFeature {
     });
   }
 
-  // ---------- 宝库队列(车头把多个轻量 bot 依次拉到同一个宝库) ----------
+  // ---------- 宝库队列: 两段式(先配置到内存, 再 --start 执行; 不落盘) ----------
+
+  describeQueueConfig() {
+    const cfg = this.queueConfig;
+    const targets = cfg.targets.length > 0 ? cfg.targets.join(' ') : '(未设置)';
+    const at = cfg.at ? `${cfg.at.x},${cfg.at.y},${cfg.at.z}` : '(自动找最近宝库)';
+    return `目标: ${targets} | 间隔: ${cfg.delayMs}ms | 落地等待: ${cfg.settleMs}ms | 结束回基地: ${cfg.backAtEnd ? '是' : '否'} | 宝库坐标: ${at}`;
+  }
 
   cancelQueue(context = null) {
     if (!this.queueRunning) {
@@ -335,41 +343,93 @@ class VaultFeature {
     });
   }
 
+  // 返回 { start, invalid, targets?, settleMs?, delayMs?, backAtEnd?, at? }
   parseQueueArgs(args) {
-    const options = { settleMs: 1200, delayMs: 8000, backAtEnd: true, targets: [], at: null };
+    const parsed = { start: false, reset: false, invalid: false, targets: [] };
 
     for (const raw of Array.isArray(args) ? args : []) {
       const value = String(raw || '').trim();
       if (!value) continue;
 
+      if (/^--reset$/i.test(value)) { parsed.reset = true; continue; }
+      if (/^--start$/i.test(value)) { parsed.start = true; continue; }
+
       const settle = value.match(/^--settle=(\d+)$/i);
-      if (settle) { options.settleMs = Number(settle[1]); continue; }
+      if (settle) { parsed.settleMs = Number(settle[1]); continue; }
 
       const delay = value.match(/^--delay=(\d+)$/i);
-      if (delay) { options.delayMs = Number(delay[1]); continue; }
+      if (delay) { parsed.delayMs = Number(delay[1]); continue; }
 
-      if (/^--no-back$/i.test(value)) { options.backAtEnd = false; continue; }
-      if (/^--back$/i.test(value)) { options.backAtEnd = true; continue; }
+      if (/^--no-back$/i.test(value)) { parsed.backAtEnd = false; continue; }
+      if (/^--back$/i.test(value)) { parsed.backAtEnd = true; continue; }
 
       const at = value.match(/^--at=(-?\d+),(-?\d+),(-?\d+)$/i);
-      if (at) { options.at = { x: Number(at[1]), y: Number(at[2]), z: Number(at[3]) }; continue; }
+      if (at) { parsed.at = { x: Number(at[1]), y: Number(at[2]), z: Number(at[3]) }; continue; }
 
-      if (/^[A-Za-z0-9_]{1,16}$/.test(value)) options.targets.push(value);
+      if (/^[A-Za-z0-9_]{1,16}$/.test(value)) { parsed.targets.push(value); continue; }
+
+      parsed.invalid = true;
     }
 
-    options.targets = Array.from(new Set(options.targets));
-    return options;
+    parsed.targets = Array.from(new Set(parsed.targets));
+    return parsed;
   }
 
-  async runQueue(context, args) {
+  handleQueueCommand(context, args) {
+    const parsed = this.parseQueueArgs(args);
+
+    if (parsed.invalid) {
+      context.replyError('用法: vaultqueue <玩家名...> [--settle=ms] [--delay=ms] [--at=x,y,z] [--no-back] | vaultqueue --start | vaultqueue stop');
+      return;
+    }
+
+    if (parsed.reset) {
+      if (this.queueRunning) {
+        context.replyError('队列正在运行, 请先发送: vaultqueue stop');
+        return;
+      }
+
+      this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null };
+      context.replyInfo('宝库队列配置已重置为默认值');
+      context.replyInfo(this.describeQueueConfig());
+      return;
+    }
+
+    if (parsed.start) {
+      this.runQueue(context).catch((error) => {
+        context.replyError(`宝库队列出错: ${error.message}`);
+      });
+      return;
+    }
+
+    // 配置模式: 只写入内存, 不执行
+    if (parsed.targets.length > 0) this.queueConfig.targets = parsed.targets;
+    if (parsed.settleMs !== undefined) this.queueConfig.settleMs = parsed.settleMs;
+    if (parsed.delayMs !== undefined) this.queueConfig.delayMs = parsed.delayMs;
+    if (parsed.backAtEnd !== undefined) this.queueConfig.backAtEnd = parsed.backAtEnd;
+    if (parsed.at !== undefined) this.queueConfig.at = parsed.at;
+
+    context.replyInfo('宝库队列配置已保存(仅内存, 重启后需重新配置)');
+    context.replyInfo(this.describeQueueConfig());
+    context.replyInfo('准备好后发送: vaultqueue --start');
+  }
+
+  async runQueue(context) {
+    const cfg = this.queueConfig;
+
     if (!this.isFullMode()) {
       const caps = this.getCapabilities ? this.getCapabilities() || {} : {};
       context.replyError(`vaultqueue 需要完整模式(地形处理 + 实体处理)的车头, 当前 entity=${caps.entityHandling ? 'on' : 'off'} terrain=${caps.terrainHandling ? 'on' : 'off'}`);
       return;
     }
 
-    if (!this.impl || typeof this.impl.openNearestVault !== 'function') {
-      context.replyError('车头没有加载宝库模块(impl 缺失)，请重启该 bot 实例后再试');
+    if (cfg.targets.length === 0) {
+      context.replyError('还没有配置目标 bot, 请先发送: vaultqueue <玩家名...>');
+      return;
+    }
+
+    if (!cfg.at && (!this.impl || typeof this.impl.openNearestVault !== 'function')) {
+      context.replyError('车头没有加载宝库模块(impl 缺失)，请重启该 bot 实例后再试, 或先用 --at=x,y,z 指定坐标');
       return;
     }
 
@@ -383,21 +443,15 @@ class VaultFeature {
       return;
     }
 
-    const options = this.parseQueueArgs(args);
-    if (options.targets.length === 0) {
-      context.replyError('用法: vaultqueue [--settle=ms] [--delay=ms] [--no-back] <玩家名...>');
-      return;
-    }
-
     this.queueRunning = true;
     this.queueCancelled = false;
 
     try {
       let position;
 
-      if (options.at) {
-        position = { ...options.at };
-        context.replyInfo(`使用指定宝库坐标 (${position.x}, ${position.y}, ${position.z})`);
+      if (cfg.at) {
+        position = { ...cfg.at };
+        context.replyInfo(`使用已配置的宝库坐标 (${position.x}, ${position.y}, ${position.z})`);
       } else {
         context.replyInfo('宝库队列: 车头先开启最近的宝库 ...');
         const opened = await this.impl.openNearestVault();
@@ -411,34 +465,32 @@ class VaultFeature {
 
       const { x, y, z } = position;
       this.lastVault = { x, y, z };
-      context.replyInfo(`车头已开启宝库 (${x}, ${y}, ${z})，开始派送 ${options.targets.length} 个 bot`);
+      context.replyInfo(`宝库坐标 (${x}, ${y}, ${z})，开始派送 ${cfg.targets.length} 个 bot`);
 
       let delivered = 0;
-      for (const target of options.targets) {
+      for (const target of cfg.targets) {
         if (this.queueCancelled) break;
 
         this.bot.chat(`/tpahere ${target}`);
-        await this.sleepCancellable(options.settleMs);
+        await this.sleepCancellable(cfg.settleMs);
 
         this.bot.chat(`/minecraft:w ${target} vault ${x} ${y} ${z}`);
         delivered += 1;
-        context.replyInfo(`[${delivered}/${options.targets.length}] 已让 ${target} 打开 (${x}, ${y}, ${z})`);
+        context.replyInfo(`[${delivered}/${cfg.targets.length}] 已让 ${target} 打开 (${x}, ${y}, ${z})`);
 
-        await this.sleepCancellable(options.delayMs);
+        await this.sleepCancellable(cfg.delayMs);
       }
 
-      if (options.backAtEnd) {
+      if (cfg.backAtEnd) {
         this.bot.chat('/back');
       }
 
-      const suffix = options.backAtEnd ? '，车头已 /back 回基地' : '';
+      const suffix = cfg.backAtEnd ? '，车头已 /back 回基地' : '';
       if (this.queueCancelled) {
-        context.replyInfo(`宝库队列已停止: 已派送 ${delivered}/${options.targets.length} 个 bot${suffix}`);
+        context.replyInfo(`宝库队列已停止: 已派送 ${delivered}/${cfg.targets.length} 个 bot${suffix}`);
       } else {
-        context.replyInfo(`宝库队列完成: 已派送 ${delivered}/${options.targets.length} 个 bot${suffix}`);
+        context.replyInfo(`宝库队列完成: 已派送 ${delivered}/${cfg.targets.length} 个 bot${suffix}`);
       }
-    } catch (error) {
-      context.replyError(`宝库队列出错: ${error.message}`);
     } finally {
       this.queueRunning = false;
       this.queueCancelled = false;

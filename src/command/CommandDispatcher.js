@@ -138,7 +138,9 @@ class CommandDispatcher {
       withCapability('cplace [间隔ms] [stop|nostop]', { terrainHandling: true }),
       '  stopcplace',
       '  vault [x y z]',
-      '  vaultqueue [--settle=ms] [--delay=ms] [--no-back] <玩家名...> | vaultqueue stop',
+      '  vaultqueue <玩家名...> [--settle=ms] [--delay=ms] [--at=x,y,z] [--no-back]   (只保存配置到内存)',
+      '  vaultqueue --start   (执行队列) | vaultqueue stop   (停止运行中的队列)',
+      '  vaultqueue --reset   (清空已保存的配置)',
       '  script <文件>',
       '  stopscript',
       '  reloadwhitelist',
@@ -442,12 +444,7 @@ class CommandDispatcher {
         return true;
       }
 
-      if (!this.isTerrainHandlingEnabled() || !this.isEntityHandlingEnabled()) {
-        context.replyError('vaultqueue 需要完整模式(地形处理 + 实体处理)的车头');
-        return true;
-      }
-
-      this.vaultFeature.runQueue(context, queueArgs);
+      this.vaultFeature.handleQueueCommand(context, queueArgs);
       return true;
     }
 
