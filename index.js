@@ -1,10 +1,14 @@
 const path = require('path');
 const readline = require('readline');
 const { MultibotApp, MULTIBOT_VERSION } = require('./src/app/MultibotApp');
+const { installFromNodeModules } = require('./src/session/msaRefreshRetry');
 
 async function main() {
   // 启动第一条输出: 版本号(版本规则见 AGENTS.md)
   console.log(`MULTIBOT ${MULTIBOT_VERSION}`);
+
+  // 给 prismarine-auth 的 MSA 刷新加重试: 避免瞬时刷新失败直接回退设备码(非交互环境必然失败)
+  installFromNodeModules();
 
   const configPath = process.argv[2]
     ? path.resolve(process.cwd(), process.argv[2])
