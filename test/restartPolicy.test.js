@@ -19,7 +19,7 @@ test('RestartPolicy uses built-in reconnect defaults when values are omitted', (
   const policy = new RestartPolicy({ restartOnDisconnect: true }, {
     randomProvider: () => 0
   });
-  const schedule = policy.buildRestartSchedule('disconnect', {
+  const schedule = policy.buildRestartSchedule('kick', {
     useReconnectPolicy: true
   });
 
@@ -39,7 +39,7 @@ test('RestartPolicy randomizes reconnect delays within the jitter window', () =>
   }, {
     randomProvider: () => 0
   });
-  const scheduleLow = policyLow.buildRestartSchedule('disconnect', {
+  const scheduleLow = policyLow.buildRestartSchedule('kick', {
     useReconnectPolicy: true
   });
 
@@ -53,7 +53,7 @@ test('RestartPolicy randomizes reconnect delays within the jitter window', () =>
   }, {
     randomProvider: () => 0.5
   });
-  const scheduleMid = policyMid.buildRestartSchedule('disconnect', {
+  const scheduleMid = policyMid.buildRestartSchedule('kick', {
     useReconnectPolicy: true
   });
   const expectedMidJitter = Math.floor(0.5 * (120000 + 1));
@@ -68,7 +68,7 @@ test('RestartPolicy randomizes reconnect delays within the jitter window', () =>
   }, {
     randomProvider: () => 0.999999
   });
-  const scheduleHigh = policyHigh.buildRestartSchedule('disconnect', {
+  const scheduleHigh = policyHigh.buildRestartSchedule('kick', {
     useReconnectPolicy: true
   });
 
@@ -127,7 +127,7 @@ test('RestartPolicy selects schedule levels by attempt index', () => {
   assert.equal(second.baseDelayMs, 300000);
   assert.equal(second.scheduleIndex, 1);
 
-  const last = policy.buildRestartSchedule('disconnect', {
+  const last = policy.buildRestartSchedule('kick', {
     attempt: 2,
     useReconnectPolicy: true
   });
@@ -142,7 +142,7 @@ test('RestartPolicy repeats the last schedule level when repeatLast is true', ()
   }, {
     randomProvider: () => 0
   });
-  const schedule = policy.buildRestartSchedule('disconnect', {
+  const schedule = policy.buildRestartSchedule('kick', {
     attempt: 5,
     useReconnectPolicy: true
   });
@@ -159,7 +159,7 @@ test('RestartPolicy reports exhausted when repeatLast is false', () => {
   }, {
     randomProvider: () => 0
   });
-  const schedule = policy.buildRestartSchedule('disconnect', {
+  const schedule = policy.buildRestartSchedule('kick', {
     attempt: 2,
     useReconnectPolicy: true
   });
@@ -192,7 +192,7 @@ test('RestartPolicy applies no random jitter when restartJitterMs is zero', () =
   }, {
     randomProvider: () => 0.999999
   });
-  const schedule = policy.buildRestartSchedule('disconnect', {
+  const schedule = policy.buildRestartSchedule('kick', {
     attempt: 0,
     useReconnectPolicy: true
   });
@@ -238,4 +238,32 @@ test('RestartPolicy explicit override ignores schedule and jitter', () => {
   assert.equal(schedule.scheduleConfigured, false);
   assert.equal(schedule.scheduleIndex, null);
   assert.equal(schedule.exhausted, false);
+});
+
+test('RestartPolicy 网络类断开首轮用 3s+0~2s 快速重连, 第二次回到长延迟', () => {
+  const policy = new RestartPolicy({
+    restartDelayMs: 60000,
+    restartJitterMs: 120000,
+    restartFastRetryDelayMs: 3000,
+    restartFastRetryJitterMs: 2000
+  }, { randomProvider: () => 0.5 });
+
+  const first = policy.buildRestartSchedule('disconnect', { attempt: 0, useReconnectPolicy: true });
+  assert.equal(first.baseDelayMs, 3000);
+  assert.equal(first.jitterMs, 1000);
+  assert.equal(first.totalDelayMs, 4000);
+
+  const second = policy.buildRestartSchedule('disconnect', { attempt: 1, useReconnectPolicy: true });
+  assert.equal(second.baseDelayMs, 60000);
+  assert.ok(second.jitterMs > 0 && second.jitterMs <= 120000);
+
+  const keepAlive = policy.buildRestartSchedule('keepAliveError', { attempt: 0, useReconnectPolicy: true });
+  assert.equal(keepAlive.baseDelayMs, 3000);
+
+  const manual = policy.buildRestartSchedule('manual_restart', { attempt: 0, useReconnectPolicy: true });
+
+  const offPolicy = new RestartPolicy({ restartDelayMs: 60000, restartJitterMs: 120000 }, { randomProvider: () => 0.5 });
+  const disabled = offPolicy.buildRestartSchedule('disconnect', { attempt: 0, useReconnectPolicy: true });
+  assert.equal(disabled.baseDelayMs, 60000, '未配置 restartFastRetryDelayMs 时不启用快速重连');
+  assert.equal(manual.baseDelayMs, 60000);
 });

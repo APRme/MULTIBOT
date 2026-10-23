@@ -80,7 +80,7 @@ test('loadMasterConfig resolves MULTIBOT sessions dir', () => {
   assert.deepEqual(masterConfig.protocolGuard, {
     enabled: true,
     ignoreMalformedNbtArrayPackets: true,
-    burstLimit: 20,
+    burstLimit: 200,
     burstWindowMs: 60000,
     logParseErrors: true,
     desyncSilenceMs: 8000

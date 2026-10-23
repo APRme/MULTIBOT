@@ -80,10 +80,21 @@ class VaultFeature {
       return;
     }
 
+    // 只有真 bot(能 loadPlugin / 有 findBlock)才初始化遗留模块; 否则(如测试假 bot)直接跳过
+    if (typeof bot.loadPlugin !== 'function' || typeof bot.findBlock !== 'function') {
+      return;
+    }
+
     const legacyModulesDir = this.paths.legacyModulesDir || path.resolve(__dirname, '..', '..', 'legacy', 'assn');
     const modulePath = path.join(legacyModulesDir, 'trial.js');
-    this.impl = requireFresh(modulePath);
-    this.impl.initTrial(bot);
+
+    try {
+      this.impl = requireFresh(modulePath);
+      this.impl.initTrial(bot);
+    } catch (error) {
+      this.impl = null;
+      if (this.logger) this.logger.warn('[VAULT] 初始化宝库遗留模块失败: ' + error.message);
+    }
   }
 
   handleCommand(context, args = []) {

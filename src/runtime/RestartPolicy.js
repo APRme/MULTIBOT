@@ -1,3 +1,14 @@
+// 网络类断开: 首次重连用短延迟, 避免因服务器瞬断而长时间下线
+const NETWORK_DISCONNECT_REASONS = new Set([
+  'disconnect',
+  'keepaliveerror',
+  'socketclosed',
+  'timeout',
+  'keepalive_timeout'
+]);
+// 默认 3 秒: 仅在 restartFastRetryDelayMs 配置后启用
+const FAST_RETRY_JITTER_MS = 2000;
+
 class RestartPolicy {
   constructor(botConfig = {}, options = {}) {
     this.botConfig = botConfig;
@@ -32,6 +43,13 @@ class RestartPolicy {
 
   getDelayMs(overrideDelayMs) {
     return this.getBaseDelayMs(overrideDelayMs);
+  }
+
+  getFastRetryJitterMs() {
+    const configuredJitter = Number.parseInt(this.botConfig.restartFastRetryJitterMs, 10);
+    return Number.isFinite(configuredJitter) && configuredJitter >= 0
+      ? configuredJitter
+      : FAST_RETRY_JITTER_MS;
   }
 
   getDisconnectJitterMs() {
@@ -82,8 +100,19 @@ class RestartPolicy {
       baseDelayMs = this.getBaseDelayMs();
     }
 
+    // 网络类断开的第一次重连: 可选的固定短延迟(默认不启用, 由 restartFastRetryDelayMs 打开)
+    const reasonKey = String(reason || '').toLowerCase();
+    const fastDelayMs = Number.parseInt(this.botConfig.restartFastRetryDelayMs, 10);
+    const fastRetryEnabled = Number.isFinite(fastDelayMs) && fastDelayMs >= 0;
+    const fastRetry = fastRetryEnabled && useReconnectPolicy && attempt === 0 && NETWORK_DISCONNECT_REASONS.has(reasonKey);
+    if (fastRetry) {
+      baseDelayMs = fastDelayMs;
+      scheduleIndex = null;
+      exhausted = false;
+    }
+
     const maxJitterMs = useReconnectPolicy && !exhausted
-      ? this.getDisconnectJitterMs()
+      ? (fastRetry ? this.getFastRetryJitterMs() : this.getDisconnectJitterMs())
       : 0;
     const randomValue = this.randomProvider();
     const normalizedRandom = Number.isFinite(randomValue)

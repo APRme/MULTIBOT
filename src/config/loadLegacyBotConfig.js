@@ -350,6 +350,17 @@ function normalizeLegacyConfig(rawConfig, defaultConfig = getDefaultLegacyConfig
         ? rawConfig.behavior.lockAfterExpireCommand
         : defaultConfig.behavior.lockAfterExpireCommand
     },
+    restartFastRetryDelayMs: Number.isFinite(Number(rawConfig.restartFastRetryDelayMs))
+      ? Math.max(0, Math.trunc(Number(rawConfig.restartFastRetryDelayMs)))
+      : (Number.isFinite(Number(defaultConfig.restartFastRetryDelayMs))
+        ? Math.max(0, Math.trunc(Number(defaultConfig.restartFastRetryDelayMs)))
+        : undefined),
+    restartFastRetryJitterMs: Number.isFinite(Number(rawConfig.restartFastRetryJitterMs))
+      ? Math.max(0, Math.trunc(Number(rawConfig.restartFastRetryJitterMs)))
+      : (Number.isFinite(Number(defaultConfig.restartFastRetryJitterMs))
+        ? Math.max(0, Math.trunc(Number(defaultConfig.restartFastRetryJitterMs)))
+        : undefined),
+
     capabilities: {
       ...defaultConfig.capabilities,
       ...(isPlainObject(rawConfig.capabilities) ? rawConfig.capabilities : {}),

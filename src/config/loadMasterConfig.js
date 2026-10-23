@@ -343,7 +343,7 @@ function normalizeProtocolGuardConfig(rawConfig) {
   return {
     enabled: source.enabled !== false,
     ignoreMalformedNbtArrayPackets: source.ignoreMalformedNbtArrayPackets !== false,
-    burstLimit: normalizePositiveInteger(source.burstLimit, 20),
+    burstLimit: normalizePositiveInteger(source.burstLimit, 200),
     burstWindowMs: normalizePositiveInteger(source.burstWindowMs, 60000),
     logParseErrors: source.logParseErrors !== false,
     // 被协议保护吞掉的解析异常(如 Slot/组件 NBT)之后若这么久收不到任何包, 判定会话已失联并主动重连;
