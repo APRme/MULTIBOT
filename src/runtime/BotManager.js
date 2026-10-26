@@ -104,7 +104,7 @@ class BotManager {
       eventStream: this.eventStream,
       sessionService: this.sessionService,
       broadcastService: this.broadcastService,
-        sendCommandToBot: (username, command) => this.sendCommandToBotByUsername(username, command),
+        sendCommandToBot: (username, command) => this.sendCommandToBotByUsername(username, command, botConfig ? botConfig.serverDir : null),
       aggregateLogService: this.aggregateLogService,
       lifecycleLogService: this.lifecycleLogService,
       chatConsoleCoordinator: this.chatConsoleCoordinator,
@@ -315,23 +315,30 @@ class BotManager {
   }
 
   // 进程内给指定游戏名的 bot 下发一条命令(不经过服务器私聊, 无冷却)
-  async sendCommandToBotByUsername(username, command) {
+  // 注意: 必须限定同一服务器, 否则跨服时可能投给同名但不同服的实例
+  async sendCommandToBotByUsername(username, command, serverDir = null) {
     const name = String(username || '').trim().toLowerCase();
     if (!name) return false;
 
+    const candidates = [];
     for (const runtime of this.runtimes.values()) {
       const runtimeUsername = String((runtime.config && runtime.config.username) || '').toLowerCase();
       if (runtimeUsername !== name) continue;
-
-      try {
-        await this.executeCommand(runtime.config.id, command, { source: 'vaultqueue' });
-        return true;
-      } catch (error) {
-        return false;
-      }
+      if (serverDir && runtime.config && runtime.config.serverDir !== serverDir) continue;
+      candidates.push(runtime);
     }
 
-    return false;
+    // 同名实例可能有一份离线, 优先投给在线的那份
+    const onlineCandidate = candidates.find((runtime) => Boolean(runtime.bot));
+    const target = onlineCandidate || candidates[0];
+    if (!target) return false;
+
+    try {
+      await this.executeCommand(target.config.id, command, { source: 'vaultqueue' });
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   async executeCommand(id, command, options = {}) {
