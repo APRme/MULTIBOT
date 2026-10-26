@@ -577,7 +577,8 @@ class BotRuntime {
       logger: this.logger,
       paths: this.config.paths,
       getSequence: () => this.nextInteractionSequence(),
-      getCapabilities: () => this.getCapabilities()
+      getCapabilities: () => this.getCapabilities(),
+      sendCommandToBot: this.config.sendCommandToBot
     });
     this.attackFeature = new AttackFeature({
       logger: this.logger,

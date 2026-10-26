@@ -104,6 +104,7 @@ class BotManager {
       eventStream: this.eventStream,
       sessionService: this.sessionService,
       broadcastService: this.broadcastService,
+        sendCommandToBot: (username, command) => this.sendCommandToBotByUsername(username, command),
       aggregateLogService: this.aggregateLogService,
       lifecycleLogService: this.lifecycleLogService,
       chatConsoleCoordinator: this.chatConsoleCoordinator,
@@ -311,6 +312,26 @@ class BotManager {
     const runtime = this.getBot(id);
     if (!runtime) throw this.createBotNotFoundError(id);
     return runtime.restart(reason);
+  }
+
+  // 进程内给指定游戏名的 bot 下发一条命令(不经过服务器私聊, 无冷却)
+  async sendCommandToBotByUsername(username, command) {
+    const name = String(username || '').trim().toLowerCase();
+    if (!name) return false;
+
+    for (const runtime of this.runtimes.values()) {
+      const runtimeUsername = String((runtime.config && runtime.config.username) || '').toLowerCase();
+      if (runtimeUsername !== name) continue;
+
+      try {
+        await this.executeCommand(runtime.config.id, command, { source: 'vaultqueue' });
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    return false;
   }
 
   async executeCommand(id, command, options = {}) {

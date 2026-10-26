@@ -349,3 +349,31 @@ test('--start 可以与其它参数同行(先应用再执行)', async () => {
   assert.equal(feature.queueConfig.tpaCooldownMs, 5000);
   assert.deepEqual(feature.queueConfig.targets, ['A']);
 });
+
+test('注入 sendCommandToBot 时走进程内投递(不私聊)', async () => {
+  const delivered = [];
+  const { feature, calls } = createLead();
+  feature.sendCommandToBot = async (username, command) => {
+    delivered.push([username, command]);
+    return true;
+  };
+  const context = createContext();
+
+  feature.handleQueueCommand(context, ['--settle=5', '--delay=5', '--no-back', 'A']);
+  feature.handleQueueCommand(context, ['--start']);
+  assert.equal(await waitForText(context, /宝库队列完成/, 5000), true);
+
+  assert.deepEqual(delivered, [['A', 'vault 1 64 0']]);
+  assert.equal(calls.filter((c) => c.includes('/minecraft:w')).length, 0, '不应再私聊');
+});
+
+test('没有 sendCommandToBot 时回退到私聊', async () => {
+  const { feature, calls } = createLead();
+  const context = createContext();
+
+  feature.handleQueueCommand(context, ['--settle=5', '--delay=5', '--no-back', 'A']);
+  feature.handleQueueCommand(context, ['--start']);
+  assert.equal(await waitForText(context, /宝库队列完成/, 5000), true);
+
+  assert.deepEqual(calls, ['/tpahere A', '/minecraft:w A vault 1 64 0']);
+});

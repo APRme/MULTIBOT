@@ -37,6 +37,10 @@ class VaultFeature {
     this.logger = options.logger;
     this.getSequence = typeof options.getSequence === 'function' ? options.getSequence : null;
     this.getCapabilities = typeof options.getCapabilities === 'function' ? options.getCapabilities : null;
+    this.sendCommandToBot = typeof options.sendCommandToBot === 'function' ? options.sendCommandToBot : null;
+    this.teleportTimeoutMs = Number.isFinite(options.teleportTimeoutMs)
+      ? Math.max(0, Math.trunc(options.teleportTimeoutMs))
+      : 12000;
     this.settleTimeoutMs = Number.isFinite(options.settleTimeoutMs)
       ? Math.max(0, Math.trunc(options.settleTimeoutMs))
       : 3000;
@@ -52,7 +56,7 @@ class VaultFeature {
     this.lastVault = null;
     this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null, tpaCooldownMs: null };
     this.lastTpahereAt = 0;
-    this.chatGapMs = 900;
+    this.chatGapMs = 1200;
     this.lastChatAt = 0;
     this.queueRunning = false;
     this.queueCancelled = false;
@@ -521,6 +525,59 @@ class VaultFeature {
 
   // 车头自己就地开箱(不移动): 装钥匙 -> 发 block_place -> 等 vault_state 变化
   // 出站聊天节流: 保证两次 bot.chat 之间至少 chatGapMs, 避免服务端"发送过快"丢包
+  // 等某类聊天出现(true)或超时(false)
+  waitForChat(pattern, timeoutMs) {
+    const bot = this.bot;
+    if (!bot || typeof bot.on !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+
+      const finish = (hit) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (typeof bot.removeListener === 'function') bot.removeListener('message', onMessage);
+        resolve(hit);
+      };
+
+      const onMessage = (message) => {
+        const text = typeof message === 'string'
+          ? message
+          : String(message && typeof message.toString === 'function' ? message.toString() : '');
+        if (pattern.test(text)) finish(true);
+      };
+
+      bot.on('message', onMessage);
+      timer = setTimeout(() => finish(false), timeoutMs);
+    });
+  }
+
+  // 服务器有传送预热(实测 5 秒), 必须等"传送完成"才算真正落地
+  waitForTeleportDone(timeoutMs) {
+    return this.waitForChat(/传送完成/, timeoutMs);
+  }
+
+  // 进程内投递 vault 命令; 没有钩子或投递失败才退回私聊
+  async deliverVaultCommand(target, x, y, z) {
+    const command = `vault ${x} ${y} ${z}`;
+
+    if (this.sendCommandToBot) {
+      try {
+        const delivered = await this.sendCommandToBot(target, command);
+        if (delivered) return 'local';
+      } catch (error) {
+        // 落到私聊兜底
+      }
+    }
+
+    await this.sendChatThrottled(`/minecraft:w ${target} ${command}`);
+    return 'whisper';
+  }
+
   // 等对方"接受了你的传送请求"(最多 timeoutMs), 确保人已落地再发 vault 坐标
   waitForTeleportAccept(timeoutMs) {
     const bot = this.bot;
@@ -682,9 +739,13 @@ class VaultFeature {
         // 关键: 等对方确认接受并落地, 避免 vault 命令先于人到达
         const settleTimeoutMs = cfg.settleTimeoutMs === undefined ? this.settleTimeoutMs : cfg.settleTimeoutMs;
         await this.waitForTeleportAccept(settleTimeoutMs);
+
+        // 5 秒传送预热: 等服务器真正把人送过来, 否则坐标会先到
+        const teleportTimeoutMs = cfg.teleportTimeoutMs === undefined ? this.teleportTimeoutMs : cfg.teleportTimeoutMs;
+        await this.waitForTeleportDone(teleportTimeoutMs);
         await this.sleepCancellable(cfg.settleMs);
 
-        await this.sendChatThrottled(`/minecraft:w ${target} vault ${x} ${y} ${z}`);
+        await this.deliverVaultCommand(target, x, y, z);
         delivered += 1;
         context.replyInfo(`[${delivered}/${cfg.targets.length}] 已让 ${target} 打开 (${x}, ${y}, ${z})`);
 
