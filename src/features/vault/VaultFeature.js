@@ -80,8 +80,9 @@ class VaultFeature {
       return;
     }
 
-    // 只有真 bot(能 loadPlugin / 有 findBlock)才初始化遗留模块; 否则(如测试假 bot)直接跳过
-    if (typeof bot.loadPlugin !== 'function' || typeof bot.findBlock !== 'function') {
+    // 只有真 bot(有 loadPlugin)才初始化遗留模块; 测试里的假 bot 没有, 直接跳过
+    // 注意: 不能要求 bot.findBlock —— 该能力由 mineflayer blocks 插件提供, 装配时机不可靠
+    if (typeof bot.loadPlugin !== 'function') {
       return;
     }
 
