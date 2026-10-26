@@ -278,3 +278,44 @@ test('stop() 取消队列并清空 impl/bot', async () => {
   assert.equal(feature.impl, null);
   assert.equal(feature.bot, null);
 });
+
+test('--tpa-cooldown 未配置时行为与之前一致(不额外等待)', async () => {
+  const stamps = [];
+  const { feature, bot } = createLead();
+  bot.chat = (message) => { if (String(message).startsWith('/tpahere')) stamps.push(Date.now()); };
+  const context = createContext();
+
+  feature.handleQueueCommand(context, ['--settle=5', '--delay=20', '--no-back', 'A', 'B']);
+  feature.handleQueueCommand(context, ['--start']);
+  assert.equal(await waitForText(context, /宝库队列完成/, 4000), true);
+
+  assert.equal(stamps.length, 2);
+  // 基线来自聊天节流(每条 900ms), 不是 tpa 冷却
+  assert.ok(stamps[1] - stamps[0] < 2600, `默认不应有明显额外等待, 实际 ${stamps[1] - stamps[0]}ms`);
+});
+
+test('配置 --tpa-cooldown 后两次 tpahere 至少间隔该值', async () => {
+  const stamps = [];
+  const { feature, bot } = createLead();
+  bot.chat = (message) => { if (String(message).startsWith('/tpahere')) stamps.push(Date.now()); };
+  const context = createContext();
+
+  feature.handleQueueCommand(context, ['--settle=5', '--delay=20', '--tpa-cooldown=4000', '--no-back', 'A', 'B']);
+  feature.handleQueueCommand(context, ['--start']);
+  assert.equal(await waitForText(context, /宝库队列完成/, 9000), true);
+
+  assert.equal(stamps.length, 2);
+  assert.ok(stamps[1] - stamps[0] >= 3900, `两次 tpahere 应 >=4000ms, 实际 ${stamps[1] - stamps[0]}ms`);
+});
+
+test('摘要里显示 tpa 冷却状态, --reset 会清空', async () => {
+  const { feature } = createLead();
+  const context = createContext();
+
+  feature.handleQueueCommand(context, ['--tpa-cooldown=5000']);
+  assert.equal(await waitForText(context, /tpa冷却: 5000ms/), true);
+
+  feature.handleQueueCommand(context, ['--reset']);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(feature.queueConfig.tpaCooldownMs, null);
+});

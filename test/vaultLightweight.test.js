@@ -42,6 +42,8 @@ function createHarness(options = {}) {
   bot.inventory = { slots: [], hotbarStart: 36 };
   bot.quickBarSlot = 0;
   bot.swingArm = () => {};
+  const chats = [];
+  bot.chat = (message) => chats.push(message);
   bot.setQuickBarSlot = (slot) => { bot.quickBarSlot = slot; };
   Object.defineProperty(bot, 'heldItem', {
     get() { return bot.inventory.slots[36 + (Number.isFinite(bot.quickBarSlot) ? bot.quickBarSlot : 0)] || null; }
@@ -58,12 +60,13 @@ function createHarness(options = {}) {
   let sequence = 0;
   const feature = new VaultFeature({
     logger: null,
+    homeDelayMs: options.homeDelayMs === undefined ? 40 : options.homeDelayMs,
     activateTimeoutMs: options.activateTimeoutMs || 60,
     getSequence: () => { sequence += 1; return sequence; }
   });
   feature.attach(bot);
 
-  return { bot, client, writes, moves, feature };
+  return { bot, client, writes, moves, chats, feature };
 }
 
 function setSlot(harness, slot, item) {
@@ -193,4 +196,24 @@ test('普通钥匙无反应时自动改用不详钥匙', async () => {
   harness.client.emit('block_change', { location: VAULT, type: STATE_ID('unlocking') });
   assert.equal(await waitForDone(context), true);
   assert.match(context.text, /ominous_trial_key/);
+});
+
+test('开完宝库后等一会自动发送 /home', async () => {
+  const harness = createHarness({ homeDelayMs: 40 });
+  const context = createContext();
+  harness.bot.inventory.slots[36] = { name: 'trial_key', count: 1, slot: 36 };
+
+  harness.feature.handleCommand(context, ['100', '64', '200']);
+
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline && harness.writes.length === 0) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  harness.client.emit('block_change', { location: { x: 100, y: 64, z: 200 }, type: STATE_ID('unlocking') });
+
+  const chatDeadline = Date.now() + 2000;
+  while (Date.now() < chatDeadline && !harness.chats.includes('/home')) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(harness.chats.includes('/home'), true, '应发送 /home');
 });

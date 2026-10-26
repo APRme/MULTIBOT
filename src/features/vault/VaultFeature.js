@@ -37,6 +37,9 @@ class VaultFeature {
     this.logger = options.logger;
     this.getSequence = typeof options.getSequence === 'function' ? options.getSequence : null;
     this.getCapabilities = typeof options.getCapabilities === 'function' ? options.getCapabilities : null;
+    this.homeDelayMs = Number.isFinite(options.homeDelayMs)
+      ? Math.max(0, Math.trunc(options.homeDelayMs))
+      : 2000;
     this.activateTimeoutMs = Number.isFinite(options.activateTimeoutMs)
       ? Math.max(50, Math.trunc(options.activateTimeoutMs))
       : DEFAULT_ACTIVATE_TIMEOUT_MS;
@@ -44,7 +47,8 @@ class VaultFeature {
     this.bot = null;
     this.fallbackSequence = 0;
     this.lastVault = null;
-    this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null };
+    this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null, tpaCooldownMs: null };
+    this.lastTpahereAt = 0;
     this.chatGapMs = 900;
     this.lastChatAt = 0;
     this.queueRunning = false;
@@ -158,6 +162,10 @@ class VaultFeature {
       const outcome = await this.sendActivateAndWait(coordinates);
       if (outcome === 'opened') {
         context.replyInfo(`已激活宝库 (${x}, ${y}, ${z}) [${candidate.itemName}]，战利品请手动拾取`);
+
+        // 开完稍等再回城: 给掉落物/服务端状态一点时间
+        await new Promise((resolve) => setTimeout(resolve, this.homeDelayMs));
+        await this.sendChatThrottled('/home');
         return;
       }
 
@@ -331,14 +339,15 @@ class VaultFeature {
     const cfg = this.queueConfig;
     const targets = cfg.targets.length > 0 ? cfg.targets.join(' ') : '(未设置)';
     const at = cfg.at ? `${cfg.at.x},${cfg.at.y},${cfg.at.z}` : '(自动找最近宝库)';
-    return `目标: ${targets} | 间隔: ${cfg.delayMs}ms | 落地等待: ${cfg.settleMs}ms | 结束回基地: ${cfg.backAtEnd ? '是' : '否'} | 宝库坐标: ${at}`;
+    const tpaCooldown = Number.isFinite(cfg.tpaCooldownMs) ? `${cfg.tpaCooldownMs}ms` : '未启用';
+    return `目标: ${targets} | 间隔: ${cfg.delayMs}ms | 落地等待: ${cfg.settleMs}ms | tpa冷却: ${tpaCooldown} | 结束回基地: ${cfg.backAtEnd ? '是' : '否'} | 宝库坐标: ${at}`;
   }
 
   getQueueHelpLines() {
     return [
       '用法: vaultqueue <玩家名...> [--delay=ms] [--settle=ms] [--at=x,y,z] [--no-back]  (保存配置) | vaultqueue --start (执行) | vaultqueue stop (停止) | vaultqueue --reset (清空)',
       '说明: --delay 每bot间隔(默认8000ms) · --settle tpahere后落地等待(默认1200ms) · --at=x,y,z 直接指定宝库坐标 · --no-back 结束不回基地',
-      '提示: 配置仅保存在内存, 重启后需要重新配置; 一个队列内所有 bot 开同一个宝库'
+      '提示: --tpa-cooldown=ms 可限制两次 tpahere 的最小间隔(默认不启用); 配置仅保存在内存, 重启后需要重新配置'
     ];
   }
 
@@ -388,6 +397,9 @@ class VaultFeature {
       if (!value) continue;
 
       if (/^--reset$/i.test(value)) { parsed.reset = true; continue; }
+
+      const tpaCooldown = value.match(/^--tpa-cooldown=(\d+)$/i);
+      if (tpaCooldown) { parsed.tpaCooldownMs = Number(tpaCooldown[1]); continue; }
       if (/^--start$/i.test(value)) { parsed.start = true; continue; }
 
       const settle = value.match(/^--settle=(\d+)$/i);
@@ -425,7 +437,7 @@ class VaultFeature {
         return;
       }
 
-      this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null };
+      this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null, tpaCooldownMs: null };
       context.replyInfo('宝库队列配置已重置为默认值');
       context.replyInfo(this.describeQueueConfig());
       return;
@@ -443,7 +455,8 @@ class VaultFeature {
       || parsed.settleMs !== undefined
       || parsed.delayMs !== undefined
       || parsed.backAtEnd !== undefined
-      || parsed.at !== undefined;
+      || parsed.at !== undefined
+      || parsed.tpaCooldownMs !== undefined;
 
     if (!changed) {
       replyLinesSpaced(context, [
@@ -458,6 +471,7 @@ class VaultFeature {
     if (parsed.delayMs !== undefined) this.queueConfig.delayMs = parsed.delayMs;
     if (parsed.backAtEnd !== undefined) this.queueConfig.backAtEnd = parsed.backAtEnd;
     if (parsed.at !== undefined) this.queueConfig.at = parsed.at;
+    if (parsed.tpaCooldownMs !== undefined) this.queueConfig.tpaCooldownMs = parsed.tpaCooldownMs;
 
     replyLinesSpaced(context, [
       '宝库队列配置已保存(仅内存, 重启后需重新配置)',
@@ -607,7 +621,14 @@ class VaultFeature {
       for (const target of cfg.targets) {
         if (this.queueCancelled) break;
 
+        if (Number.isFinite(cfg.tpaCooldownMs) && this.lastTpahereAt > 0) {
+          const waitMs = Math.max(0, this.lastTpahereAt + cfg.tpaCooldownMs - Date.now());
+          if (waitMs > 0) await this.sleepCancellable(waitMs);
+          if (this.queueCancelled) break;
+        }
+
         await this.sendChatThrottled(`/tpahere ${target}`);
+        this.lastTpahereAt = Date.now();
         await this.sleepCancellable(cfg.settleMs);
 
         await this.sendChatThrottled(`/minecraft:w ${target} vault ${x} ${y} ${z}`);
