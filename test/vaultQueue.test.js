@@ -61,6 +61,8 @@ function createLead(options = {}) {
   if (options.withKey !== false) bot.inventory.slots[36] = { name: 'trial_key', count: 1, slot: 36 };
 
   const feature = new VaultFeature({
+    replyToChat: true,
+    chatGapMs: 5,
     logger: null,
     getSequence: () => 1,
     activateTimeoutMs: options.activateTimeoutMs || 120,

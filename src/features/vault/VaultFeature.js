@@ -56,7 +56,9 @@ class VaultFeature {
     this.lastVault = null;
     this.queueConfig = { targets: [], settleMs: 1200, delayMs: 8000, backAtEnd: true, at: null, tpaCooldownMs: null };
     this.lastTpahereAt = 0;
-    this.chatGapMs = 1200;
+    // 队列内部进度默认只写日志, 不发服务器私聊; 测试可传 replyToChat: true
+    this.replyToChat = options.replyToChat === true;
+    this.chatGapMs = Number.isFinite(options.chatGapMs) ? Math.max(0, Math.trunc(options.chatGapMs)) : 2000;
     this.lastChatAt = 0;
     this.queueRunning = false;
     this.queueCancelled = false;
@@ -621,6 +623,25 @@ class VaultFeature {
     return true;
   }
 
+  // 队列内部通知: 默认只写日志(面板可见), replyToChat 时才额外私聊发起人
+  notify(context, message) {
+    if (this.logger && typeof this.logger.info === 'function') this.logger.info(`[VAULT] ${message}`);
+
+    if (this.replyToChat && context && typeof context.replyInfo === 'function') {
+      context.replyInfo(message);
+    }
+  }
+
+  // 回复也走同一个聊天节流: replyInfo 最终也是发一条私聊, 不节流会被服务器判"发送过快"
+  async replyChat(context, message) {
+    const now = Date.now();
+    const waitMs = Math.max(0, this.lastChatAt + this.chatGapMs - now);
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+
+    this.lastChatAt = Date.now();
+    if (context && typeof context.replyInfo === 'function') context.replyInfo(message);
+  }
+
   async activateOwnVault(coordinates) {
     const candidates = [];
     for (const itemName of KEY_ITEM_CANDIDATES) {
@@ -681,7 +702,7 @@ class VaultFeature {
 
       if (cfg.at) {
         position = { ...cfg.at };
-        context.replyInfo(`使用已配置的宝库坐标 (${position.x}, ${position.y}, ${position.z})`);
+        this.notify(context, `使用已配置的宝库坐标 (${position.x}, ${position.y}, ${position.z})`);
       } else {
         const vault = this.impl.findNearestVault(30);
         const vaultPosition = vault && vault.position;
@@ -705,13 +726,13 @@ class VaultFeature {
           return;
         }
 
-        context.replyInfo(`车头就地激活宝库 (${position.x}, ${position.y}, ${position.z}), 距离 ${distance.toFixed(2)} 格`);
+        this.notify(context, `车头就地激活宝库 (${position.x}, ${position.y}, ${position.z}), 距离 ${distance.toFixed(2)} 格`);
 
         const own = await this.activateOwnVault(position);
         if (own.ok) {
-          context.replyInfo(`车头已开启宝库 (${position.x}, ${position.y}, ${position.z})`);
+          this.notify(context, `车头已开启宝库 (${position.x}, ${position.y}, ${position.z})`);
         } else {
-          context.replyInfo(`车头未开箱: ${own.message} — 跳过车头, 继续派送其它 bot`);
+          this.notify(context, `车头未开箱: ${own.message} — 跳过车头, 继续派送其它 bot`);
         }
       }
 
@@ -721,7 +742,7 @@ class VaultFeature {
 
       const { x, y, z } = position;
       this.lastVault = { x, y, z };
-      context.replyInfo(`宝库坐标 (${x}, ${y}, ${z})，开始派送 ${cfg.targets.length} 个 bot`);
+      this.notify(context, `宝库坐标 (${x}, ${y}, ${z})，开始派送 ${cfg.targets.length} 个 bot`);
 
       let delivered = 0;
       for (const target of cfg.targets) {
@@ -747,7 +768,7 @@ class VaultFeature {
 
         await this.deliverVaultCommand(target, x, y, z);
         delivered += 1;
-        context.replyInfo(`[${delivered}/${cfg.targets.length}] 已让 ${target} 打开 (${x}, ${y}, ${z})`);
+        this.notify(context, `[${delivered}/${cfg.targets.length}] 已让 ${target} 打开 (${x}, ${y}, ${z})`);
 
         await this.sleepCancellable(cfg.delayMs);
       }
@@ -758,9 +779,9 @@ class VaultFeature {
 
       const suffix = cfg.backAtEnd ? '，车头已 /back 回基地' : '';
       if (this.queueCancelled) {
-        context.replyInfo(`宝库队列已停止: 已派送 ${delivered}/${cfg.targets.length} 个 bot${suffix}`);
+        this.notify(context, `宝库队列已停止: 已派送 ${delivered}/${cfg.targets.length} 个 bot${suffix}`);
       } else {
-        context.replyInfo(`宝库队列完成: 已派送 ${delivered}/${cfg.targets.length} 个 bot${suffix}`);
+        this.notify(context, `宝库队列完成: 已派送 ${delivered}/${cfg.targets.length} 个 bot${suffix}`);
       }
     } finally {
       this.queueRunning = false;
