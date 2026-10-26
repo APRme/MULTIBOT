@@ -319,3 +319,33 @@ test('摘要里显示 tpa 冷却状态, --reset 会清空', async () => {
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(feature.queueConfig.tpaCooldownMs, null);
 });
+
+test('waitForTeleportAccept 命中"接受/传送"消息即返回 true', async () => {
+  const { feature, bot } = createLead();
+  const emitter = new EventEmitter();
+  bot.on = emitter.on.bind(emitter);
+  bot.removeListener = emitter.removeListener.bind(emitter);
+
+  const pending = feature.waitForTeleportAccept(500);
+  setTimeout(() => emitter.emit('message', 'APR_mem 接受了你的传送请求'), 20);
+  assert.equal(await pending, true);
+});
+
+test('waitForTeleportAccept 超时返回 false', async () => {
+  const { feature, bot } = createLead();
+  const emitter = new EventEmitter();
+  bot.on = emitter.on.bind(emitter);
+  bot.removeListener = emitter.removeListener.bind(emitter);
+
+  assert.equal(await feature.waitForTeleportAccept(60), false);
+});
+
+test('--start 可以与其它参数同行(先应用再执行)', async () => {
+  const { feature } = createLead();
+  const context = createContext();
+
+  feature.handleQueueCommand(context, ['--settle=5', '--delay=5', '--no-back', '--tpa-cooldown=5000', '--start', 'A']);
+  assert.equal(await waitForText(context, /宝库队列完成/, 4000), true);
+  assert.equal(feature.queueConfig.tpaCooldownMs, 5000);
+  assert.deepEqual(feature.queueConfig.targets, ['A']);
+});

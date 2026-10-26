@@ -37,6 +37,9 @@ class VaultFeature {
     this.logger = options.logger;
     this.getSequence = typeof options.getSequence === 'function' ? options.getSequence : null;
     this.getCapabilities = typeof options.getCapabilities === 'function' ? options.getCapabilities : null;
+    this.settleTimeoutMs = Number.isFinite(options.settleTimeoutMs)
+      ? Math.max(0, Math.trunc(options.settleTimeoutMs))
+      : 3000;
     this.homeDelayMs = Number.isFinite(options.homeDelayMs)
       ? Math.max(0, Math.trunc(options.homeDelayMs))
       : 2000;
@@ -340,7 +343,8 @@ class VaultFeature {
     const targets = cfg.targets.length > 0 ? cfg.targets.join(' ') : '(未设置)';
     const at = cfg.at ? `${cfg.at.x},${cfg.at.y},${cfg.at.z}` : '(自动找最近宝库)';
     const tpaCooldown = Number.isFinite(cfg.tpaCooldownMs) ? `${cfg.tpaCooldownMs}ms` : '未启用';
-    return `目标: ${targets} | 间隔: ${cfg.delayMs}ms | 落地等待: ${cfg.settleMs}ms | tpa冷却: ${tpaCooldown} | 结束回基地: ${cfg.backAtEnd ? '是' : '否'} | 宝库坐标: ${at}`;
+    const settleTimeout = Number.isFinite(cfg.settleTimeoutMs) ? `${cfg.settleTimeoutMs}ms` : `${this.settleTimeoutMs}ms`;
+    return `目标: ${targets} | 间隔: ${cfg.delayMs}ms | 落地等待: ${cfg.settleMs}ms | tpa冷却: ${tpaCooldown} | 接受等待: ${settleTimeout} | 结束回基地: ${cfg.backAtEnd ? '是' : '否'} | 宝库坐标: ${at}`;
   }
 
   getQueueHelpLines() {
@@ -398,6 +402,9 @@ class VaultFeature {
 
       if (/^--reset$/i.test(value)) { parsed.reset = true; continue; }
 
+      const settleTimeout = value.match(/^--settle-timeout=(\d+)$/i);
+      if (settleTimeout) { parsed.settleTimeoutMs = Number(settleTimeout[1]); continue; }
+
       const tpaCooldown = value.match(/^--tpa-cooldown=(\d+)$/i);
       if (tpaCooldown) { parsed.tpaCooldownMs = Number(tpaCooldown[1]); continue; }
       if (/^--start$/i.test(value)) { parsed.start = true; continue; }
@@ -444,6 +451,15 @@ class VaultFeature {
     }
 
     if (parsed.start) {
+      // 允许 vaultqueue --start --tpa-cooldown=5000 这种写法: 先应用本行参数再执行
+      if (parsed.targets.length > 0) this.queueConfig.targets = parsed.targets;
+      if (parsed.settleMs !== undefined) this.queueConfig.settleMs = parsed.settleMs;
+      if (parsed.delayMs !== undefined) this.queueConfig.delayMs = parsed.delayMs;
+      if (parsed.backAtEnd !== undefined) this.queueConfig.backAtEnd = parsed.backAtEnd;
+      if (parsed.at !== undefined) this.queueConfig.at = parsed.at;
+      if (parsed.tpaCooldownMs !== undefined) this.queueConfig.tpaCooldownMs = parsed.tpaCooldownMs;
+      if (parsed.settleTimeoutMs !== undefined) this.queueConfig.settleTimeoutMs = parsed.settleTimeoutMs;
+
       this.runQueue(context).catch((error) => {
         context.replyError(`宝库队列出错: ${error.message}`);
       });
@@ -456,7 +472,8 @@ class VaultFeature {
       || parsed.delayMs !== undefined
       || parsed.backAtEnd !== undefined
       || parsed.at !== undefined
-      || parsed.tpaCooldownMs !== undefined;
+      || parsed.tpaCooldownMs !== undefined
+      || parsed.settleTimeoutMs !== undefined;
 
     if (!changed) {
       replyLinesSpaced(context, [
@@ -472,6 +489,7 @@ class VaultFeature {
     if (parsed.backAtEnd !== undefined) this.queueConfig.backAtEnd = parsed.backAtEnd;
     if (parsed.at !== undefined) this.queueConfig.at = parsed.at;
     if (parsed.tpaCooldownMs !== undefined) this.queueConfig.tpaCooldownMs = parsed.tpaCooldownMs;
+    if (parsed.settleTimeoutMs !== undefined) this.queueConfig.settleTimeoutMs = parsed.settleTimeoutMs;
 
     replyLinesSpaced(context, [
       '宝库队列配置已保存(仅内存, 重启后需重新配置)',
@@ -503,6 +521,37 @@ class VaultFeature {
 
   // 车头自己就地开箱(不移动): 装钥匙 -> 发 block_place -> 等 vault_state 变化
   // 出站聊天节流: 保证两次 bot.chat 之间至少 chatGapMs, 避免服务端"发送过快"丢包
+  // 等对方"接受了你的传送请求"(最多 timeoutMs), 确保人已落地再发 vault 坐标
+  waitForTeleportAccept(timeoutMs) {
+    const bot = this.bot;
+    if (!bot || typeof bot.on !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+
+      const finish = (accepted) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (typeof bot.removeListener === 'function') bot.removeListener('message', onMessage);
+        resolve(accepted);
+      };
+
+      const onMessage = (message) => {
+        const text = typeof message === 'string'
+          ? message
+          : String(message && typeof message.toString === 'function' ? message.toString() : '');
+        if (text.includes('接受') && text.includes('传送')) finish(true);
+      };
+
+      bot.on('message', onMessage);
+      timer = setTimeout(() => finish(false), timeoutMs);
+    });
+  }
+
   async sendChatThrottled(message) {
     if (!this.bot || typeof this.bot.chat !== 'function') return false;
 
@@ -629,6 +678,10 @@ class VaultFeature {
 
         await this.sendChatThrottled(`/tpahere ${target}`);
         this.lastTpahereAt = Date.now();
+
+        // 关键: 等对方确认接受并落地, 避免 vault 命令先于人到达
+        const settleTimeoutMs = cfg.settleTimeoutMs === undefined ? this.settleTimeoutMs : cfg.settleTimeoutMs;
+        await this.waitForTeleportAccept(settleTimeoutMs);
         await this.sleepCancellable(cfg.settleMs);
 
         await this.sendChatThrottled(`/minecraft:w ${target} vault ${x} ${y} ${z}`);
