@@ -555,6 +555,18 @@ async function simplePlaceBlock() {
       block.position.z + faceVector.z
     );
 
+    // 目标位置必须可替换: 已经有方块就不要再发包(否则服务端拒绝, 会误判成功)
+    const beforeBlock = typeof bot.blockAt === 'function' ? bot.blockAt(placePosition) : null;
+    if (beforeBlock) {
+      const beforeName = String(beforeBlock.name || '');
+      const replaceable = beforeName === 'air' || beforeName === 'cave_air' || beforeName === 'void_air'
+        || beforeName === 'water' || beforeName === 'lava';
+      if (!replaceable) {
+        console.log(`[持续放置] 目标位置已被 ${beforeName} 占用, 跳过`);
+        return false;
+      }
+    }
+
     // 先挂监听再发包, 免得漏掉很快返回的 block_change
     const settled = waitForBlockChange(placePosition, 400);
 
@@ -567,10 +579,23 @@ async function simplePlaceBlock() {
       sequence: nextInteractionSequence()
     });
 
-    const placed = await settled;
-    if (!placed) {
+    const changed = await settled;
+    if (!changed) {
       console.log(`[持续放置] 未在 400ms 内观察到放置结果`);
       return false;
+    }
+
+    // 双重校验: block_change 不一定代表这个地方真的变了, 用世界数据确认一次
+    if (typeof bot.blockAt === 'function') {
+      const afterBlock = bot.blockAt(placePosition);
+      if (afterBlock) {
+        const afterName = String(afterBlock.name || '');
+        const stillEmpty = afterName === 'air' || afterName === 'cave_air' || afterName === 'void_air';
+        if (stillEmpty) {
+          console.log(`[持续放置] block_change 到了但该位置仍是空气, 视为失败`);
+          return false;
+        }
+      }
     }
 
     console.log(`[持续放置] 放置成功 -> (${placePosition.x}, ${placePosition.y}, ${placePosition.z})`);
