@@ -15,7 +15,7 @@ const { InstanceLifecycleLogService, LIFECYCLE_EVENTS } = require('../logging/In
 const { EventThresholdTracker } = require('../notifications/EventThresholdTracker');
 const { summarizeError } = require('../util/redact');
 
-const MULTIBOT_VERSION = 'V26.4.83-Vault';
+const MULTIBOT_VERSION = 'V26.4.84-Vault';
 
 // 录像子系统(flashback-recorder)自身的异常不应牵连 bot:
 // 它既不该触发"全量重启所有 bot", 也不该让进程硬退出而不关闭连接

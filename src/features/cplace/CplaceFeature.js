@@ -5,6 +5,7 @@ class CplaceFeature {
   constructor(options = {}) {
     this.paths = options.paths || {};
     this.logger = options.logger;
+    this.getSequence = typeof options.getSequence === 'function' ? options.getSequence : null;
     this.impl = null;
   }
 
@@ -13,7 +14,7 @@ class CplaceFeature {
     const legacyModulesDir = this.paths.legacyModulesDir || path.resolve(__dirname, '..', '..', 'legacy', 'assn');
     const modulePath = path.join(legacyModulesDir, 'cplace.js');
     this.impl = requireFresh(modulePath);
-    this.impl.initCplace(bot);
+    this.impl.initCplace(bot, { getSequence: this.getSequence });
   }
 
   async handleCommand(context, trimmed) {

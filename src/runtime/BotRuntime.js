@@ -617,7 +617,8 @@ class BotRuntime {
     });
     this.cplaceFeature = new CplaceFeature({
       logger: this.logger,
-      paths: this.config.paths
+      paths: this.config.paths,
+      getSequence: () => this.nextInteractionSequence()
     });
     this.eatFeature = new EatFeature({
       logger: this.logger,

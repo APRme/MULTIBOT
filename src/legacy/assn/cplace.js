@@ -41,8 +41,69 @@ function isGravityBlock(blockName) {
 }
 
 // 初始化函数，从主文件传入机器人实例
-function initCplace(botInstance) {
+let getSequence = null; // 与其它交互共用的 sequence 计数器
+let fallbackSequence = 0;
+
+function initCplace(botInstance, options = {}) {
   bot = botInstance;
+  getSequence = typeof options.getSequence === 'function' ? options.getSequence : null;
+  fallbackSequence = 0;
+}
+
+function nextInteractionSequence() {
+  if (getSequence) return getSequence();
+  fallbackSequence = (fallbackSequence + 1) % 32767;
+  return fallbackSequence;
+}
+
+// 眼睛 -> 方块 1x1x1 AABB 最近点距离(与服务端交互距离同度量)
+function distanceToBlockCube(position, blockPosition) {
+  if (!position || !blockPosition) return null;
+
+  const eyeX = Number(position.x);
+  const eyeY = Number(position.y) + 1.62;
+  const eyeZ = Number(position.z);
+  if (![eyeX, eyeY, eyeZ].every((value) => Number.isFinite(value))) return null;
+
+  const dx = Math.max(blockPosition.x - eyeX, 0, eyeX - (blockPosition.x + 1));
+  const dy = Math.max(blockPosition.y - eyeY, 0, eyeY - (blockPosition.y + 1));
+  const dz = Math.max(blockPosition.z - eyeZ, 0, eyeZ - (blockPosition.z + 1));
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+function getInteractionLimit() {
+  const mode = bot && bot.game ? bot.game.gameMode : 'survival';
+  return mode === 'creative' ? 6.0 : 5.5;
+}
+
+// 等目标位置出现 block_change(服务端已落地的证据)
+function waitForBlockChange(position, timeoutMs) {
+  const client = bot && bot._client;
+  if (!client || typeof client.on !== 'function') return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+
+    const finish = (hit) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      for (const eventName of ['block_change', 'block_update']) {
+        client.removeListener(eventName, onBlockChange);
+      }
+      resolve(hit);
+    };
+
+    const onBlockChange = (packet) => {
+      const location = packet && packet.location;
+      if (!location) return;
+      if (location.x === position.x && location.y === position.y && location.z === position.z) finish(true);
+    };
+
+    for (const eventName of ['block_change', 'block_update']) client.on(eventName, onBlockChange);
+    timer = setTimeout(() => finish(false), Math.max(50, Number(timeoutMs) || 400));
+  });
 }
 
 // -------------------- 持续放置命令处理 --------------------
@@ -454,182 +515,68 @@ function startContinuousPlacing(context, baseInterval, shouldStopOnFailures, isG
 // -------------------- 简单的放置方块函数 --------------------
 async function simplePlaceBlock() {
   try {
-    // 检查手中是否有物品
     const heldItem = bot.heldItem;
     if (!heldItem) {
       console.log(`[持续放置] 手中没有物品`);
       return false;
     }
-    
-    // 检查是否是重力方块
-    const isGravityItem = isGravityBlock(heldItem.displayName || heldItem.name);
-    
-    // 设置最大放置距离
-    const maxDistance = 5.0;
-    
-    // 对于重力方块，尝试多次获取准星指向
-    let targetBlock = null;
-    let attempts = 0;
-    const maxAttempts = isGravityItem ? 3 : 1; // 重力方块最多尝试3次
-    
-    while (attempts < maxAttempts && !targetBlock) {
-      targetBlock = bot.blockAtCursor(maxDistance);
-      attempts++;
-      
-      if (!targetBlock && attempts < maxAttempts) {
-        // 对于重力方块，等待一小段时间让世界更新
-        if (isGravityItem) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
-    }
-    
-    if (!targetBlock) {
-      console.log(`[持续放置] 准星没有指向任何方块 (尝试 ${attempts} 次)`);
-      
-      // 对于重力方块，尝试轻微调整视角
-      if (isGravityItem) {
-        console.log(`[持续放置] 重力方块: 尝试轻微调整视角重新寻找目标`);
-        // 保存当前视角
-        const currentYaw = bot.entity.yaw;
-        const currentPitch = bot.entity.pitch;
-        
-        // 尝试轻微上下移动视角
-        const smallPitchAdjustment = 0.1; // 约5.7度
-        for (let i = 0; i < 3; i++) {
-          const adjustedPitch = currentPitch + (i * smallPitchAdjustment);
-          await bot.look(currentYaw, adjustedPitch, true);
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
-          targetBlock = bot.blockAtCursor(maxDistance);
-          if (targetBlock) {
-            console.log(`[持续放置] 调整视角后找到目标方块`);
-            break;
-          }
-        }
-        
-        // 如果还是没找到，恢复原始视角
-        if (!targetBlock) {
-          await bot.look(currentYaw, currentPitch, true);
-          console.log(`[持续放置] 调整视角后仍未找到目标方块`);
-        }
-      }
-      
-      if (!targetBlock) {
-        return false;
-      }
-    }
-    
-    // 检查返回结果的结构
-    let block, face;
-    
-    // Mineflayer的blockAtCursor返回一个方块对象，face属性在方块对象上
-    if (targetBlock.face !== undefined) {
-      block = targetBlock;
-      face = targetBlock.face;
-    } else {
-      console.log(`[持续放置] 无法获取face信息`);
+
+    // 射线只用来决定"点哪一面"; 距离判定另算(与服务端口径一致)
+    const targetBlock = bot.blockAtCursor(5.0);
+    if (!targetBlock || targetBlock.face === undefined) {
+      console.log(`[持续放置] 准星没有指向可放置的方块面`);
       return false;
     }
-    
-    console.log(`[持续放置] 准星指向: ${block.name} (${block.position.x}, ${block.position.y}, ${block.position.z}), 面: ${face}`);
-    
-    // 计算放置位置（在指向方块的对面）
-    const placePosition = calculatePlacePosition(block.position, face);
-    
-    // 获取放置位置的方块
-    const placeBlock = bot.blockAt(placePosition);
-    
-    if (!placeBlock) {
-      console.log(`[持续放置] 无法获取放置位置的方块`);
+
+    const block = targetBlock;
+    const face = targetBlock.face;
+
+    const distance = distanceToBlockCube(bot.entity ? bot.entity.position : null, block.position);
+    const limit = getInteractionLimit();
+    if (distance === null) {
+      console.log(`[持续放置] 无法计算与目标方块的距离`);
       return false;
     }
-    
-    // 检查放置位置是否可放置
-    if (!canPlaceAtBlock(placeBlock)) {
-      console.log(`[持续放置] 放置位置不可用: ${placeBlock.name}`);
+    if (distance > limit) {
+      console.log(`[持续放置] 目标方块超出交互距离(实际 ${distance.toFixed(2)} 格, 上限 ${limit} 格)`);
       return false;
     }
-    
-    // 获取面的法向量
+
+    const client = bot._client;
+    if (!client || typeof client.write !== 'function') {
+      console.log(`[持续放置] 缺少 _client, 无法发送放置包`);
+      return false;
+    }
+
     const faceVector = getFaceVector(face);
-    
-    // 对于重力方块，在放置前检查下方是否为空（可能导致放置后下落）
-    if (isGravityItem) {
-      const belowPosition = new Vec3(placePosition.x, placePosition.y - 1, placePosition.z);
-      const belowBlock = bot.blockAt(belowPosition);
-      
-      // 如果下方是可替换方块，重力方块可能会下落
-      if (belowBlock && canPlaceAtBlock(belowBlock)) {
-        console.log(`[持续放置] 重力方块下方为空，放置后可能下落`);
-      }
-    }
-    
-    // 尝试放置方块
-    try {
-      console.log(`[持续放置] 尝试放置方块到 (${placePosition.x}, ${placePosition.y}, ${placePosition.z})`);
-      
-      // 对于重力方块，增加放置前的延迟
-      if (isGravityItem) {
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
-      
-      const success = await bot.placeBlock(block, faceVector);
-      
-      // 对于重力方块，放置后等待一小段时间让方块下落
-      if (isGravityItem && success) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      
-      if (success) {
-        console.log(`[持续放置] 放置成功`);
-        return true;
-      } else {
-        console.log(`[持续放置] placeBlock返回false`);
-        
-        // 对于重力方块，即使placeBlock返回false，也可能是因为方块已放置但下落到别处
-        // 这种情况下我们仍然认为成功，避免因重力特性导致停止
-        if (isGravityItem) {
-          console.log(`[持续放置] 重力方块放置返回false，但可能是由于重力下落，视为成功`);
-          
-          // 验证是否真的放置成功：检查放置位置是否还是可放置方块
-          const afterPlaceCheck = bot.blockAt(placePosition);
-          if (afterPlaceCheck && !canPlaceAtBlock(afterPlaceCheck)) {
-            console.log(`[持续放置] 验证: 放置位置现在不可放置，可能已放置成功`);
-            return true;
-          }
-          
-          return true;
-        }
-        
-        return false;
-      }
-    } catch (error) {
-      console.error(`[持续放置] 放置方块时出错:`, error.message);
-      
-      // 对于重力方块，某些错误可能只是由于下落特性导致的
-      if (isGravityItem) {
-        console.log(`[持续放置] 重力方块放置出错，可能是由于重力下落，视为成功`);
-        
-        // 尝试检查是否真的放置成功了
-        try {
-          const afterPlaceCheck = bot.blockAt(placePosition);
-          if (afterPlaceCheck && !canPlaceAtBlock(afterPlaceCheck)) {
-            console.log(`[持续放置] 验证: 放置位置现在不可放置，可能已放置成功`);
-            return true;
-          }
-        } catch (checkError) {
-          console.log(`[持续放置] 验证放置结果时出错:`, checkError.message);
-        }
-        
-        return true;
-      }
-      
+    const placePosition = new Vec3(
+      block.position.x + faceVector.x,
+      block.position.y + faceVector.y,
+      block.position.z + faceVector.z
+    );
+
+    // 先挂监听再发包, 免得漏掉很快返回的 block_change
+    const settled = waitForBlockChange(placePosition, 400);
+
+    client.write('block_place', {
+      hand: 0,
+      location: { x: block.position.x, y: block.position.y, z: block.position.z },
+      direction: face,
+      cursorX: 0.5, cursorY: 0.5, cursorZ: 0.5,
+      insideBlock: false, worldBorderHit: false,
+      sequence: nextInteractionSequence()
+    });
+
+    const placed = await settled;
+    if (!placed) {
+      console.log(`[持续放置] 未在 400ms 内观察到放置结果`);
       return false;
     }
-    
+
+    console.log(`[持续放置] 放置成功 -> (${placePosition.x}, ${placePosition.y}, ${placePosition.z})`);
+    return true;
   } catch (error) {
-    console.error('[持续放置] 放置方块出错:', error.message);
+    console.error(`[持续放置] 放置方块时出错:`, error.message);
     return false;
   }
 }
